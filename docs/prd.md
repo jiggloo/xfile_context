@@ -923,9 +923,47 @@ Full details in [`prd_open_questions.md`](./prd_open_questions.md).
 
 ## 10. Gaps Discovered During Implementation
 
-*This section will be populated during development as gaps in the PRD are discovered.*
+### Gap #1: Circular Dependency Detection Not Required for v0.1.0
+- **Date discovered:** 2025-11-26
+- **Original design:** FR-6 and FR-7 specified that the system MUST handle and warn about circular dependencies
+- **Gap identified:** All graph operations use O(1) bidirectional index lookups with no deep traversals, making cycle detection unnecessary for preventing infinite loops
+- **Impact:** Cycle detection would be the ONLY deep traversal operation in the system, adding complexity (5,000 DFS runs during indexing) without addressing any actual infinite loop risk
+- **Resolution:** Deferred FR-6 and FR-7 to v0.1.1+; circular import detection is a nice-to-have code quality feature, not essential for core functionality
+- **Related TDD sections:** See `docs/tdd.md` Section 3.5.5 (Circular Dependency Detection - DEFERRED)
 
-*Format for each gap:*
+### Gap #2: Token Limit Should Be Metrics-Driven, Not Fixed
+- **Date discovered:** 2025-11-26
+- **Original design:** FR-10 specified a fixed 500 token limit for context injection
+- **Gap identified:** Without real-world data, any fixed limit is arbitrary; a metrics-driven approach allows data to guide future decisions
+- **Impact:** Avoids premature optimization and artificial constraints on context injection; enables data-driven tuning in v0.1.1+
+- **Resolution:** FR-10 updated to metrics-driven approach: no token limit in v0.1.0, track comprehensive metrics (min, max, median, p95, p99), add configurable limit only if data shows need
+- **Related TDD sections:** See `docs/tdd.md` Section 3.8.4 (Token Budget Management) and FR-10 specification
+
+### Gap #3: Cache Expiry Should Use Staleness Detection, Not Time-Based Expiry
+- **Date discovered:** 2025-11-26
+- **Original design:** FR-14 specified time-based cache expiry (10 minutes of inactivity)
+- **Gap identified:** Time-based expiry creates race condition: file could be modified after expiry check but before cache invalidation (TOCTOU vulnerability)
+- **Impact:** Race condition could cause incorrect context injection with stale data
+- **Resolution:** Removed FR-14 time-based expiry; implemented demand-driven staleness detection using FileWatcher timestamps checked on every cache read (Section 3.7)
+- **Related TDD sections:** See `docs/tdd.md` Section 3.7 (Working Memory Cache) and Section 3.6 (File Watcher)
+
+### Gap #4: Code Quality Assumptions Needed for AST-Based Symbol Resolution
+- **Date discovered:** 2025-11-26
+- **Original design:** PRD assumed AST parsing would handle all symbol resolution edge cases
+- **Gap identified:** Handling all edge cases (name shadowing, import shadowing, duplicate definitions) adds significant complexity for poorly-maintained code
+- **Impact:** Not reasonable for MVP to handle all edge cases; most Python developers use linters (flake8/ruff) that prevent these issues
+- **Resolution:** Added code quality assumptions to TDD requiring well-linted code (no flake8 F811 errors); system uses Python semantics (last definition wins) for edge cases
+- **Related TDD sections:** See `docs/tdd.md` Section 1.1 (Code Quality Assumptions) and Section 3.5.2.2 (Function Resolution)
+
+### Gap #5: Interpreter Inspection as Alternative to AST Analysis
+- **Date discovered:** 2025-11-26
+- **Original design:** PRD specified AST-based static analysis as the only approach
+- **Gap identified:** Python interpreter inspection could provide automatic correctness by leveraging Python's own resolution logic, but has tradeoffs (side effects, security, performance)
+- **Impact:** AST-first approach is safer and more robust, but interpreter inspection could be valuable fallback for ambiguous cases
+- **Resolution:** Documented interpreter inspection as alternative approach for v0.2.0+ with metrics to guide decision (Section 3.5.6); added identifier resolution metrics to track AST effectiveness
+- **Related TDD sections:** See `docs/tdd.md` Section 3.5.6 (Alternative Approach: Interpreter Inspection) and Section 3.10.1 (Identifier Resolution Effectiveness metrics)
+
+*Format for future gaps:*
 - **Gap #:** Title
 - **Date discovered:** YYYY-MM-DD
 - **Original design:** What the PRD assumed
