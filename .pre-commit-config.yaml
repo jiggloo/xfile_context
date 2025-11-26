@@ -1,0 +1,48 @@
+# Copyright (c) 2025 Henru Wang
+# All rights reserved.
+
+# Pre-commit hooks configuration
+# See https://pre-commit.com for more information
+
+repos:
+  # Code formatting
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+        args: [--line-length=100]
+        language_version: python3.9
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: [--profile=black, --line-length=100]
+
+  # Linting
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+
+  # Type checking
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [pytest>=8.0.0]
+        args: []
+        pass_filenames: false
+        entry: bash -c 'mypy src/ --strict && mypy tests/ --no-strict-optional --allow-untyped-defs --allow-incomplete-defs'
+
+  # Fast unit tests
+  - repo: local
+    hooks:
+      - id: pytest-fast
+        name: pytest (fast tests only)
+        entry: pytest
+        language: system
+        args: [-m, "not slow", --tb=short]
+        pass_filenames: false
+        types: [python]

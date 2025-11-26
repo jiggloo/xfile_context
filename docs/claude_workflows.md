@@ -73,7 +73,7 @@ state for automated steps to be taken before human review. The automated steps m
    Code Quality, Completeness, Documentation, Security/Safety. Changes made by the agents MUST be consolidated
    into a single Git commit and pushed to the pull request. The commit message MUST include the consolidated
    review summary of the multiple agents.
-3. If the PR has >100 lines added or changed, then step 2 MUST be repeated so that there are two reviews.
+3. If the PR has >200 lines added or changed, then step 2 MUST be repeated so that there are two reviews.
 
 The multi-agent reviews MUST take into account:
 - The contents of the Github Issue include comments and discussions.
@@ -90,8 +90,8 @@ The project follows semantic versioning with a pre-1.0 scheme that tracks story 
 
 **Version Format**: `0.MINOR.PATCH`
 
-- **PATCH version** (0.0.N): Incremented after each Story PR is merged
-  - The PATCH number corresponds to the story number (e.g., 0.0.10 = Story 10 complete)
+- **PATCH version** (0.0.N): Incremented after each Task PR is merged
+  - The PATCH number corresponds to the task number (e.g., 0.0.11 = Task 1.1 complete)
   - Story PR: A pull request that implements one of the stories defined in TDD Section 3.4
 
 - **MINOR version** (0.1.0): Incremented when all TDD stories in Section 3.4 are complete
@@ -99,17 +99,17 @@ The project follows semantic versioning with a pre-1.0 scheme that tracks story 
   - This represents the minimum viable product ready for production deployment
 
 **Version Update Process**:
-1. After a Story PR is merged to the main branch, the version MUST be updated
+1. After a Task PR is merged to the main branch, the version MUST be updated
 2. Update `pyproject.toml` version field manually
-3. The version update SHOULD be included in the Story PR itself before merge
+3. The version update SHOULD be included in the Task PR itself before merge
    - If version update is missed, it can be corrected via a separate PR following normal Git Development Workflow
 4. Version updates do NOT require their own Github Issue unless there are complications (e.g., correcting an incorrectly set version)
 
 **Example Version Progression**:
-- 0.0.1 - Story 1 complete
-- 0.0.2 - Story 2 complete
+- 0.0.1 - Task 0.1 complete
+- 0.0.2 - Task 0.2 complete
 - ...
-- 0.0.10 - Story 10 complete
+- 0.0.11 - Story 1.1 complete
 - ...
 - 0.1.0 - All stories complete, ready for production
 

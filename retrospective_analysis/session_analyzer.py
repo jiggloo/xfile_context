@@ -7,16 +7,17 @@ Analyzes .jsonl session logs to identify inefficient search/discovery patterns.
 
 import json
 import sys
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
-from collections import defaultdict
+from typing import Dict, List, Optional
 
 
 @dataclass
 class ToolCall:
     """Represents a single tool invocation with its result."""
+
     tool_id: str
     tool_name: str
     timestamp: datetime
@@ -26,7 +27,7 @@ class ToolCall:
     is_error: bool = False
     is_empty: bool = False
 
-    def elapsed_ms(self, other: 'ToolCall') -> float:
+    def elapsed_ms(self, other: "ToolCall") -> float:
         """Calculate milliseconds between this and another tool call."""
         delta = other.timestamp - self.timestamp
         return delta.total_seconds() * 1000
@@ -59,8 +60,10 @@ class SessionAnalyzer:
                             tool_call = ToolCall(
                                 tool_id=content.get("id"),
                                 tool_name=content.get("name"),
-                                timestamp=datetime.fromisoformat(data["timestamp"].replace("Z", "+00:00")),
-                                inputs=content.get("input", {})
+                                timestamp=datetime.fromisoformat(
+                                    data["timestamp"].replace("Z", "+00:00")
+                                ),
+                                inputs=content.get("input", {}),
                             )
                             tool_map[tool_call.tool_id] = tool_call
                             self.tool_calls.append(tool_call)
@@ -88,14 +91,16 @@ class SessionAnalyzer:
                                     tool_call.result_metadata = data.get("toolUseResult", {})
 
                                     # Detect errors
-                                    tool_call.is_error = "error" in result_str.lower() or "Error" in result_str
+                                    tool_call.is_error = (
+                                        "error" in result_str.lower() or "Error" in result_str
+                                    )
 
                                     # Detect empty results (tool-specific)
                                     if tool_call.tool_name in ["Grep", "Glob"]:
                                         num_files = tool_call.result_metadata.get("numFiles", -1)
                                         tool_call.is_empty = num_files == 0
                                     elif tool_call.tool_name == "Read":
-                                        # Empty if result is very short or contains common error patterns
+                                        # Empty if very short or has error patterns
                                         tool_call.is_empty = len(result_str.strip()) < 10
 
     def analyze_search_efficiency(self) -> Dict:
@@ -121,17 +126,19 @@ class SessionAnalyzer:
             "total_searches": len(searches),
             "empty_results": len(empty_searches),
             "error_results": len(error_searches),
-            "success_rate": (len(searches) - len(empty_searches)) / len(searches) if searches else 0,
+            "success_rate": (
+                (len(searches) - len(empty_searches)) / len(searches) if searches else 0
+            ),
             "repeated_patterns_count": len(repeated_patterns),
             "repeated_patterns": repeated_patterns,
             "empty_search_details": [
                 {
                     "tool": s.tool_name,
                     "pattern": s.inputs.get("pattern", "N/A"),
-                    "timestamp": s.timestamp.isoformat()
+                    "timestamp": s.timestamp.isoformat(),
                 }
                 for s in empty_searches[:10]  # Limit to first 10
-            ]
+            ],
         }
 
     def analyze_file_access_sequence(self) -> Dict:
@@ -144,24 +151,26 @@ class SessionAnalyzer:
             file_path = read.inputs.get("file_path", "")
             file_access_counts[file_path].append(read)
 
-        re_reads = {path: accesses for path, accesses in file_access_counts.items() if len(accesses) > 1}
+        re_reads = {
+            path: accesses for path, accesses in file_access_counts.items() if len(accesses) > 1
+        }
 
         # Calculate time between first and second read (potential context loss)
         re_read_intervals = []
         for path, accesses in re_reads.items():
             if len(accesses) >= 2:
                 interval_ms = accesses[0].elapsed_ms(accesses[1])
-                re_read_intervals.append({
-                    "file": path,
-                    "interval_ms": interval_ms,
-                    "num_accesses": len(accesses)
-                })
+                re_read_intervals.append(
+                    {"file": path, "interval_ms": interval_ms, "num_accesses": len(accesses)}
+                )
 
         return {
             "total_reads": len(reads),
             "unique_files": len(file_access_counts),
             "re_read_files": len(re_reads),
-            "re_read_intervals": sorted(re_read_intervals, key=lambda x: x["interval_ms"], reverse=True)[:10]
+            "re_read_intervals": sorted(
+                re_read_intervals, key=lambda x: x["interval_ms"], reverse=True
+            )[:10],
         }
 
     def analyze_tool_distribution(self) -> Dict:
@@ -179,10 +188,16 @@ class SessionAnalyzer:
 
         # Time to first file read
         first_read = next((tc for tc in self.tool_calls if tc.tool_name == "Read"), None)
-        first_search = next((tc for tc in self.tool_calls if tc.tool_name in ["Grep", "Glob"]), None)
+        first_search = next(
+            (tc for tc in self.tool_calls if tc.tool_name in ["Grep", "Glob"]), None
+        )
 
         metrics = {
-            "session_duration_ms": self.tool_calls[0].elapsed_ms(self.tool_calls[-1]) if len(self.tool_calls) > 1 else 0,
+            "session_duration_ms": (
+                self.tool_calls[0].elapsed_ms(self.tool_calls[-1])
+                if len(self.tool_calls) > 1
+                else 0
+            ),
             "first_tool": self.tool_calls[0].tool_name if self.tool_calls else None,
         }
 
@@ -201,47 +216,63 @@ class SessionAnalyzer:
         discovery_metrics = self.calculate_discovery_metrics()
 
         report = []
-        report.append(f"# Information Retrieval Pattern Analysis")
+        report.append("# Information Retrieval Pattern Analysis")
         report.append(f"\n**Session:** {self.session_id}")
         report.append(f"**Log File:** {self.session_file.name}")
-        report.append(f"\n## Overview")
+        report.append("\n## Overview")
         report.append(f"- Total tool calls: {len(self.tool_calls)}")
-        report.append(f"- Session duration: {discovery_metrics.get('session_duration_ms', 0):.0f}ms")
+        report.append(
+            f"- Session duration: {discovery_metrics.get('session_duration_ms', 0):.0f}ms"
+        )
         report.append(f"- First tool used: {discovery_metrics.get('first_tool', 'N/A')}")
 
-        report.append(f"\n## Tool Usage Distribution")
+        report.append("\n## Tool Usage Distribution")
         for tool, count in tool_dist.items():
             report.append(f"- {tool}: {count}")
 
-        report.append(f"\n## Search Efficiency Analysis")
+        report.append("\n## Search Efficiency Analysis")
         report.append(f"- Total searches (Grep/Glob): {search_analysis['total_searches']}")
-        report.append(f"- Empty results: {search_analysis['empty_results']} ({search_analysis['empty_results']/search_analysis['total_searches']*100 if search_analysis['total_searches'] else 0:.1f}%)")
+        empty_pct = (
+            search_analysis["empty_results"] / search_analysis["total_searches"] * 100
+            if search_analysis["total_searches"]
+            else 0
+        )
+        report.append(f"- Empty results: {search_analysis['empty_results']} ({empty_pct:.1f}%)")
         report.append(f"- Success rate: {search_analysis['success_rate']*100:.1f}%")
         report.append(f"- Repeated patterns: {search_analysis['repeated_patterns_count']}")
 
-        if search_analysis['empty_search_details']:
-            report.append(f"\n### Empty Search Samples (First 10)")
-            for detail in search_analysis['empty_search_details']:
-                report.append(f"- **{detail['tool']}**: `{detail['pattern']}` at {detail['timestamp']}")
+        if search_analysis["empty_search_details"]:
+            report.append("\n### Empty Search Samples (First 10)")
+            for detail in search_analysis["empty_search_details"]:
+                report.append(
+                    f"- **{detail['tool']}**: `{detail['pattern']}` at {detail['timestamp']}"
+                )
 
-        if search_analysis['repeated_patterns']:
-            report.append(f"\n### Repeated Search Patterns")
-            for pattern, calls in list(search_analysis['repeated_patterns'].items())[:5]:
+        if search_analysis["repeated_patterns"]:
+            report.append("\n### Repeated Search Patterns")
+            for pattern, calls in list(search_analysis["repeated_patterns"].items())[:5]:
                 report.append(f"- Pattern `{pattern}`: {len(calls)} times")
 
-        report.append(f"\n## File Access Analysis")
+        report.append("\n## File Access Analysis")
         report.append(f"- Total file reads: {file_analysis['total_reads']}")
         report.append(f"- Unique files accessed: {file_analysis['unique_files']}")
         report.append(f"- Files re-read: {file_analysis['re_read_files']}")
 
-        if file_analysis['re_read_intervals']:
-            report.append(f"\n### Files Re-Read (Potential Context Loss)")
-            for interval in file_analysis['re_read_intervals']:
-                report.append(f"- `{interval['file']}`: {interval['num_accesses']} times, {interval['interval_ms']:.0f}ms between first and second read")
+        if file_analysis["re_read_intervals"]:
+            report.append("\n### Files Re-Read (Potential Context Loss)")
+            for interval in file_analysis["re_read_intervals"]:
+                file_path = interval["file"]
+                num_accesses = interval["num_accesses"]
+                interval_ms = interval["interval_ms"]
+                report.append(
+                    f"- `{file_path}`: {num_accesses} times, "
+                    f"{interval_ms:.0f}ms between first and second read"
+                )
 
-        report.append(f"\n## Discovery Metrics")
-        if 'search_to_read_delay_ms' in discovery_metrics:
-            report.append(f"- Time from first search to first read: {discovery_metrics['search_to_read_delay_ms']:.0f}ms")
+        report.append("\n## Discovery Metrics")
+        if "search_to_read_delay_ms" in discovery_metrics:
+            delay_ms = discovery_metrics["search_to_read_delay_ms"]
+            report.append(f"- Time from first search to first read: {delay_ms:.0f}ms")
 
         return "\n".join(report)
 
@@ -251,7 +282,11 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: python session_analyzer.py <session.jsonl>")
         print("\nExample:")
-        print("  python session_analyzer.py ~/.claude/projects/-Users-henruwang-Code-reaction-requests/1ea0f7d8-716c-4383-8ecd-4b4cbb0b72a5.jsonl")
+        example_path = (
+            "~/.claude/projects/-Users-henruwang-Code-reaction-requests/"
+            "1ea0f7d8-716c-4383-8ecd-4b4cbb0b72a5.jsonl"
+        )
+        print(f"  python session_analyzer.py {example_path}")
         sys.exit(1)
 
     session_file = Path(sys.argv[1])
