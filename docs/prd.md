@@ -7,6 +7,48 @@
 
 ---
 
+## Table of Contents
+
+1. [Purpose](#1-purpose)
+   - 1.1 [Problem Description](#11-problem-description)
+   - 1.2 [Existing Alternative Solutions](#12-existing-alternative-solutions)
+   - 1.3 [Target Users](#13-target-users)
+2. [Current State](#2-current-state)
+   - 2.1 [Current Solution (Baseline Behavior)](#21-current-solution-baseline-behavior)
+   - 2.2 [Constraints](#22-constraints)
+   - 2.3 [Language Support Roadmap](#23-language-support-roadmap)
+   - 2.5 [Code Style Philosophy](#25-code-style-philosophy)
+3. [Proposed Solution](#3-proposed-solution)
+   - 3.1 [Solution Overview](#31-solution-overview)
+   - 3.2 [Core Features](#32-core-features)
+   - 3.3 [User Workflows](#33-user-workflows)
+   - 3.4 [V0.2.0 Design Context: Multi-Session State Sharing](#34-v020-design-context-multi-session-state-sharing)
+4. [Requirements](#4-requirements)
+   - 4.1 [Functional Requirements](#41-functional-requirements)
+   - 4.2 [Non-Functional Requirements](#42-non-functional-requirements)
+   - 4.3 [Out of Scope](#43-out-of-scope)
+5. [Success Metrics](#5-success-metrics)
+   - 5.1 [Primary Metrics](#51-primary-metrics)
+   - 5.2 [Secondary Metrics](#52-secondary-metrics)
+   - 5.3 [Success Criteria](#53-success-criteria)
+6. [Edge Cases](#6-edge-cases)
+7. [Error Handling](#7-error-handling)
+   - 7.1 [Parsing Errors](#71-parsing-errors)
+   - 7.2 [Relationship Graph Errors](#72-relationship-graph-errors)
+   - 7.3 [Cache Inconsistency Errors](#73-cache-inconsistency-errors)
+   - 7.4 [Performance Degradation](#74-performance-degradation)
+   - 7.5 [Language Support Errors](#75-language-support-errors)
+8. [Testing and Validation](#8-testing-and-validation)
+9. [Open Questions](#9-open-questions)
+   - 9.1 [Product Questions](#91-product-questions)
+   - 9.2 [Technical Questions](#92-technical-questions)
+   - 9.3 [Data and Validation Questions](#93-data-and-validation-questions)
+10. [Gaps Discovered During Implementation](#10-gaps-discovered-during-implementation)
+- [Appendix A: User Research Data](#appendix-a-user-research-data)
+- [Appendix B: Comparison with Existing Tools](#appendix-b-comparison-with-existing-tools)
+
+---
+
 ## Quick Reference
 
 This PRD uses identifiers that may reference supporting documents:

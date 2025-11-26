@@ -34,9 +34,29 @@ that lack copyright headers, Claude Code MUST add the copyright header as part o
 ## Project Documentation
 
 Project documentation is created in multiple phases:
-1. Product Requirements Document (PRD) located at `docs/prd.md`
-2. Technical Design Document (TDD) located at `docs/tdd.md`
+1. Product Requirements Document (PRD) located at `docs/prd.md` (~1100 lines)
+2. Technical Design Document (TDD) located at `docs/tdd.md` (~6700 lines)
 3. README files, code comments
+
+The PRD and TDD contain Table of Contents at the beginning of the file to help efficiently navigate files.
+The beginning of the TDD contains a quick reference about which identifiers can be effectively used with grep searches.
+The TDD section numbers can be used for grep searches. For example, the text "Section 3.5.1" can be used to find the
+TDD markdown line for the start of the section:
+```
+#### 3.5.1 AST Parsing Pipeline
+```
+
+When work is associated with a Github Issue, load only the relevant content from the TDD related to the
+work. Github Issues that are tasks created from the TDD usually contain TDD section information or inline
+identifiers (e.g. FR-10) for efficient lookup.
+
+### Subagent Token Efficiency
+
+When spawning subagents via the Task tool, the MAIN AGENT is responsible for:
+- Indicating only relevant documentation sections so subagents do efficient lookups
+- Injecting targeted context into subagent prompts
+- NOT asking subagents to "read the TDD/PRD if needed"
+- Telling subagents DO NOT read the full PRD or TDD
 
 ### PRD
 
@@ -47,13 +67,10 @@ When working on this project, reference the PRD to understand:
 - Success metrics
 - User stories and use cases
 
-Always consult the PRD before making significant changes to ensure alignment with the product vision.
-
 ### TDD
 
 When working on this project, reference the TDD to understand technical details relevant to
-coding and implementation. TDD should reference specific PRD sections by heading. Always consult the
-TDD before making code changes.
+coding and implementation. TDD should reference specific PRD sections by heading.
 
 ### Github Issues
 

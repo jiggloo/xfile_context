@@ -13,6 +13,35 @@
 
 ---
 
+## Quick Reference: Document Identifiers
+
+**Document Identifiers:**
+- **FR-#**: Functional Requirement (defined in prd.md Section 4.1)
+- **NFR-#**: Non-Functional Requirement (defined in prd.md Section 4.2)
+- **EC-#**: Edge Case (defined in prd_edge_cases.md Section 6)
+- **DD-#**: Design Decision (defined in design_decisions.md)
+- **T-#.#**: Test Case (defined in prd_testing.md Section 8)
+- **Q-#**: Open Question (defined in this TDD Section 5)
+- **TODO-#**: Action Item (defined in this TDD Section 5)
+- **G-#**: Implementation Gap (defined in this TDD Section 6)
+- **LIMITATION-#**: Known System Limitation (defined in this TDD Section 5.7)
+- **RISK-#**: Project Risk (defined in this TDD Section 5.8)
+- **Task #.#**: Development Phase Task (defined in this TDD Section 3.14)
+
+**System Components:**
+- **Relationship Graph**: In-memory data structure tracking cross-file dependencies (Section 3.3.2, Section 3.5)
+- **Working Memory Cache**: LRU cache storing recently-read file snippets (Section 3.3.3, Section 3.4.6)
+- **Detector**: Language-specific plugin for AST parsing and relationship extraction (Section 3.4.1)
+- **Context Injection**: Process of augmenting Read tool with cross-file context (Section 3.4.7)
+
+**Domain Terms:**
+- **Cross-File Context**: Information about how a file relates to other files in the codebase
+- **Context Links**: Relationships between files (imports, function calls, etc.)
+- **Incremental Update**: Re-analyzing only changed files, not entire codebase
+- **Fail-Safe Principle**: "No incorrect context is better than wrong context" (FR-42)
+
+---
+
 ## Table of Contents
 
 1. [Constraints](#1-constraints)
