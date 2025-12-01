@@ -54,7 +54,7 @@ git commit --no-verify
 
 ### GitHub Actions
 
-This project uses GitHub Actions for continuous integration. The following workflow runs automatically on pull requests and feature branches:
+This project uses GitHub Actions for continuous integration. The following workflows run automatically on pull requests:
 
 **Lightweight Checks** (`.github/workflows/lightweight-checks.yml`):
 - **Triggers**: Runs on pull request creation/updates and pushes to feature branches
@@ -66,7 +66,15 @@ This project uses GitHub Actions for continuous integration. The following workf
 - **Purpose**: Provides fast feedback (<2 minutes) in the GitHub PR UI
 - **Status**: Required check for PR merge
 
-The workflow mirrors the local pre-commit hooks to ensure consistency between local development and CI/CD.
+**Comprehensive Tests** (`.github/workflows/comprehensive-tests.yml`):
+- **Triggers**: Runs on pull request creation/updates only
+- **Matrix Strategy**: Tests across Python 3.8, 3.9, 3.10, 3.11, and 3.12 on Ubuntu
+- **Test Scope**: Full unit test suite + integration tests
+- **Timeout**: <5 minutes per environment
+- **Purpose**: Validates compatibility across all supported Python versions
+- **Status**: Required check for PR merge
+
+These workflows ensure code quality and compatibility before merging changes to the main branch.
 
 ## License
 
