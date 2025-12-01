@@ -263,6 +263,43 @@ class TestInMemoryStore:
         assert len(all_rels) == 1
         assert all_rels[0] == rel1
 
+    def test_remove_relationship_with_none_gaps(self):
+        """Test removing relationship when None gaps exist from previous removals."""
+        store = InMemoryStore()
+        rel1 = Relationship(
+            source_file="a.py",
+            target_file="b.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        rel2 = Relationship(
+            source_file="c.py",
+            target_file="d.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=2,
+        )
+        rel3 = Relationship(
+            source_file="e.py",
+            target_file="f.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=3,
+        )
+
+        store.add_relationship(rel1)
+        store.add_relationship(rel2)
+        store.add_relationship(rel3)
+
+        # Remove first relationship (creates None gap at index 0)
+        store.remove_relationship(rel1)
+
+        # Should successfully remove third relationship despite None gap
+        store.remove_relationship(rel3)
+
+        # Verify only rel2 remains
+        all_rels = store.get_all_relationships()
+        assert len(all_rels) == 1
+        assert all_rels[0] == rel2
+
     def test_self_dependency(self):
         """Test relationship where source_file == target_file."""
         store = InMemoryStore()
@@ -569,3 +606,95 @@ class TestInMemoryStoreValidation:
 
         with pytest.raises(ValueError, match="Directory traversal not allowed"):
             store.remove_relationship(rel)
+
+    def test_reject_null_byte_in_source(self):
+        """Test that null byte in source file is rejected (security)."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="legitimate.py\x00../../etc/passwd",
+            target_file="b.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+
+        with pytest.raises(ValueError, match="invalid control characters"):
+            store.add_relationship(rel)
+
+    def test_reject_null_byte_in_target(self):
+        """Test that null byte in target file is rejected (security)."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="a.py",
+            target_file="file.py\x00",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+
+        with pytest.raises(ValueError, match="invalid control characters"):
+            store.add_relationship(rel)
+
+    def test_reject_newline_in_path(self):
+        """Test that newline in path is rejected (prevents log injection)."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="file.py\nINFO: Fake log entry",
+            target_file="b.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+
+        with pytest.raises(ValueError, match="invalid control characters"):
+            store.add_relationship(rel)
+
+    def test_reject_carriage_return_in_path(self):
+        """Test that carriage return in path is rejected."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="file.py\r",
+            target_file="b.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+
+        with pytest.raises(ValueError, match="invalid control characters"):
+            store.add_relationship(rel)
+
+    def test_reject_tab_in_path(self):
+        """Test that tab character in path is rejected."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="file\t.py",
+            target_file="b.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+
+        with pytest.raises(ValueError, match="invalid control characters"):
+            store.add_relationship(rel)
+
+    def test_allow_unusual_but_valid_filenames(self):
+        """Test that unusual but valid filenames are allowed (no false positives)."""
+        store = InMemoryStore()
+
+        # File with ".." in the name (not a path separator)
+        rel1 = Relationship(
+            source_file="file..py",
+            target_file="b.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        # Should not raise - ".." without "/" is just part of filename
+        store.add_relationship(rel1)
+
+        # Another example
+        rel2 = Relationship(
+            source_file="test..module.py",
+            target_file="b.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=2,
+        )
+        store.add_relationship(rel2)
+
+        # Verify both were added
+        all_rels = store.get_all_relationships()
+        assert len(all_rels) == 2

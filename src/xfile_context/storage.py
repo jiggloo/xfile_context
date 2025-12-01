@@ -140,11 +140,19 @@ class InMemoryStore(RelationshipStore):
         if not rel.source_file or not rel.target_file:
             raise ValueError("File paths cannot be empty")
 
+        # Validate no control characters (null bytes, newlines, etc.)
+        # ASCII control characters (0-31) can enable injection attacks
+        for path in [rel.source_file, rel.target_file]:
+            if any(ord(c) < 32 for c in path):
+                raise ValueError(f"File path contains invalid control characters: {repr(path)}")
+
         # Validate no directory traversal patterns
-        if ".." in rel.source_file or ".." in rel.target_file:
-            raise ValueError(
-                f"Directory traversal not allowed: {rel.source_file} -> {rel.target_file}"
-            )
+        # Check for "../" or paths starting with ".."
+        for path in [rel.source_file, rel.target_file]:
+            if "/.." in path or path.startswith(".."):
+                raise ValueError(
+                    f"Directory traversal not allowed: {rel.source_file} -> {rel.target_file}"
+                )
 
         # Validate line number is positive
         if rel.line_number <= 0:
@@ -205,6 +213,10 @@ class InMemoryStore(RelationshipStore):
 
         # Find matching relationship
         for i, stored_rel in enumerate(self._relationships):
+            # Skip None entries (from previous removals)
+            if stored_rel is None:
+                continue
+
             if (
                 stored_rel.source_file == rel.source_file
                 and stored_rel.target_file == rel.target_file
