@@ -3,4 +3,12 @@
 
 """Cross-File Context Links MCP Server."""
 
-__version__ = "0.0.11"
+from .storage import GraphExport, InMemoryStore, RelationshipStore
+
+__version__ = "0.0.12"
+
+__all__ = [
+    "RelationshipStore",
+    "InMemoryStore",
+    "GraphExport",
+]
