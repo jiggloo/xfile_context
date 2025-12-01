@@ -52,6 +52,22 @@ To bypass hooks for a specific commit (not recommended):
 git commit --no-verify
 ```
 
+### GitHub Actions
+
+This project uses GitHub Actions for continuous integration. The following workflow runs automatically on pull requests and feature branches:
+
+**Lightweight Checks** (`.github/workflows/lightweight-checks.yml`):
+- **Triggers**: Runs on pull request creation/updates and pushes to feature branches
+- **Jobs**:
+  - Code formatting check (black, isort)
+  - Linting (ruff)
+  - Type checking (mypy)
+  - Fast unit tests (pytest with `-m "not slow"`)
+- **Purpose**: Provides fast feedback (<2 minutes) in the GitHub PR UI
+- **Status**: Required check for PR merge
+
+The workflow mirrors the local pre-commit hooks to ensure consistency between local development and CI/CD.
+
 ## License
 
 Copyright (c) 2025 Henru Wang. All rights reserved.
