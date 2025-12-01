@@ -1,0 +1,93 @@
+# Copyright (c) 2025 Henru Wang
+# All rights reserved.
+
+name: Task
+description: Development task from TDD or story breakdown
+title: "Task X.X: "
+labels: ["task", "initial"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for development tasks derived from the TDD or for breaking down larger features.
+
+        **Note**: Replace "X.X" in the title above with your actual task number (e.g., "Task 1.2: Implement parser").
+
+  - type: input
+    id: task-number
+    attributes:
+      label: Task Number Reference
+      description: The task number from TDD (e.g., "Task 1.1", "Task 2.3")
+      placeholder: "Task X.X"
+    validations:
+      required: true
+
+  - type: input
+    id: tdd-section
+    attributes:
+      label: TDD Section Reference
+      description: Link to the relevant TDD section
+      placeholder: "Section X.X.X or docs/tdd.md#heading"
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: Brief statement of what this task aims to accomplish
+      placeholder: Describe the task goal in 1-2 sentences
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Detailed description of the task and implementation approach
+      placeholder: Provide implementation details and any relevant context
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: List any dependencies on other issues or tasks (use #issue-number to link)
+      placeholder: |
+        - Depends on #42
+        - Requires completion of Task 1.0
+        - None
+    validations:
+      required: true
+
+  - type: textarea
+    id: success-criteria
+    attributes:
+      label: Success Criteria
+      description: Checklist of criteria that define when this task is complete
+      placeholder: |
+        - [ ] Implementation complete
+        - [ ] Tests passing
+        - [ ] Documentation updated
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation-notes
+    attributes:
+      label: Implementation Notes
+      description: Any technical notes, design decisions, or considerations
+    validations:
+      required: false
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Links to relevant documentation, PRD sections, or external resources
+      placeholder: |
+        - PRD Section X.X
+        - Related issue #XX
+    validations:
+      required: false

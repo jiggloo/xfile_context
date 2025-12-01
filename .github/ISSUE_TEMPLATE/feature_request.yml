@@ -1,0 +1,80 @@
+# Copyright (c) 2025 Henru Wang
+# All rights reserved.
+
+name: Feature Request
+description: Request a new feature or user story
+title: "[Feature]: "
+labels: ["enhancement", "initial"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! Please provide the following information to help us understand and implement your request.
+
+  - type: input
+    id: prd-section
+    attributes:
+      label: PRD Section Reference
+      description: Link to the relevant PRD section or heading (e.g., "Section 2.3.1" or "docs/prd.md#user-authentication")
+      placeholder: "Section X.X.X or docs/prd.md#heading"
+    validations:
+      required: true
+
+  - type: input
+    id: tdd-section
+    attributes:
+      label: TDD Section Reference
+      description: Link to the relevant TDD section (e.g., "Section 3.4.2" or "docs/tdd.md#api-design")
+      placeholder: "Section X.X.X or docs/tdd.md#heading"
+    validations:
+      required: false
+
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Requirements
+      description: List the functional (FR-) and non-functional (NFR-) requirements from the PRD/TDD
+      placeholder: |
+        - FR-10: System must detect import statements
+        - FR-11: Support Python, JavaScript, and TypeScript
+        - NFR-5: Detection must complete within 2 seconds
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Feature Description
+      description: Detailed description of the feature and its expected behavior
+      placeholder: Describe the feature, its purpose, and how it should work
+    validations:
+      required: true
+
+  - type: textarea
+    id: user-story
+    attributes:
+      label: User Story
+      description: Who needs this feature and why?
+      placeholder: "As a [user type], I want [feature] so that [benefit]"
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: How will we know this feature is complete?
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+        - [ ] Criterion 3
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Any other information, screenshots, or examples
+    validations:
+      required: false
