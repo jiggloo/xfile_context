@@ -3,6 +3,14 @@
 # All rights reserved.
 
 # Setup branch protection rules for the main branch
+#
+# Usage:
+#   ./scripts/setup_branch_protection.sh
+#
+# Prerequisites:
+#   - gh CLI installed and authenticated (run: gh auth login)
+#   - Repository admin permissions
+#
 # This script configures GitHub branch protection to enforce:
 # - Pull request workflow (no direct commits)
 # - Required approvals (at least 1)

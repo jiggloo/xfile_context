@@ -76,6 +76,23 @@ This project uses GitHub Actions for continuous integration. The following workf
 
 These workflows ensure code quality and compatibility before merging changes to the main branch.
 
+### Branch Protection
+
+The main branch is protected with rules enforced via GitHub API. To configure or update branch protection rules:
+
+```bash
+./scripts/setup_branch_protection.sh
+```
+
+**Prerequisites**: Requires `gh` CLI installed and authenticated with repository admin permissions.
+
+**Protection Rules**:
+- Pull requests required (no direct commits)
+- At least 1 approval required
+- All 9 CI checks must pass (lightweight + comprehensive)
+- Branches must be up-to-date before merging
+- Rules enforced for administrators
+
 ## License
 
 Copyright (c) 2025 Henru Wang. All rights reserved.
