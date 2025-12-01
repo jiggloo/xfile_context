@@ -1,0 +1,195 @@
+Third-Party Licenses
+================================================================================
+
+This file lists all third-party dependencies and their licenses.
+
+================================================================================
+
+Package: black
+Version: 24.8.0
+License: MIT License
+Author: Łukasz Langa <lukasz@langa.pl>
+URL: https://github.com/psf/black
+--------------------------------------------------------------------------------
+
+Package: cfgv
+Version: 3.4.0
+License: MIT License
+Author: Anthony Sottile
+URL: https://github.com/asottile/cfgv
+--------------------------------------------------------------------------------
+
+Package: click
+Version: 8.1.8
+License: BSD License
+Author: UNKNOWN
+URL: https://github.com/pallets/click/
+--------------------------------------------------------------------------------
+
+Package: coverage
+Version: 7.6.1
+License: Apache Software License
+Author: Ned Batchelder and 230 others
+URL: https://github.com/nedbat/coveragepy
+--------------------------------------------------------------------------------
+
+Package: distlib
+Version: 0.4.0
+License: Python Software Foundation License
+Author: Vinay Sajip
+URL: https://github.com/pypa/distlib
+--------------------------------------------------------------------------------
+
+Package: exceptiongroup
+Version: 1.3.1
+License: MIT License
+Author: Alex Grönholm <alex.gronholm@nextday.fi>
+URL: https://github.com/agronholm/exceptiongroup/blob/main/CHANGES.rst
+--------------------------------------------------------------------------------
+
+Package: filelock
+Version: 3.16.1
+License: The Unlicense (Unlicense)
+Author: UNKNOWN
+URL: https://github.com/tox-dev/py-filelock
+--------------------------------------------------------------------------------
+
+Package: identify
+Version: 2.6.1
+License: MIT License
+Author: Chris Kuehl
+URL: https://github.com/pre-commit/identify
+--------------------------------------------------------------------------------
+
+Package: iniconfig
+Version: 2.1.0
+License: MIT License
+Author: Ronny Pfannschmidt <opensource@ronnypfannschmidt.de>, Holger Krekel <holger.krekel@gmail.com>
+URL: https://github.com/pytest-dev/iniconfig
+--------------------------------------------------------------------------------
+
+Package: isort
+Version: 5.13.2
+License: MIT License
+Author: Timothy Crosley
+URL: https://pycqa.github.io/isort/
+--------------------------------------------------------------------------------
+
+Package: mypy
+Version: 1.14.1
+License: MIT License
+Author: Jukka Lehtosalo <jukka.lehtosalo@iki.fi>
+URL: https://www.mypy-lang.org/
+--------------------------------------------------------------------------------
+
+Package: mypy_extensions
+Version: 1.1.0
+License: UNKNOWN
+Author: The mypy developers <jukka.lehtosalo@iki.fi>
+URL: https://github.com/python/mypy_extensions
+--------------------------------------------------------------------------------
+
+Package: nodeenv
+Version: 1.9.1
+License: BSD License
+Author: Eugene Kalinin
+URL: https://github.com/ekalinin/nodeenv
+--------------------------------------------------------------------------------
+
+Package: packaging
+Version: 25.0
+License: Apache Software License; BSD License
+Author: Donald Stufft <donald@stufft.io>
+URL: https://github.com/pypa/packaging
+--------------------------------------------------------------------------------
+
+Package: pathspec
+Version: 0.12.1
+License: Mozilla Public License 2.0 (MPL 2.0)
+Author: "Caleb P. Burns" <cpburnz@gmail.com>
+URL: UNKNOWN
+--------------------------------------------------------------------------------
+
+Package: platformdirs
+Version: 4.3.6
+License: MIT License
+Author: UNKNOWN
+URL: https://github.com/tox-dev/platformdirs
+--------------------------------------------------------------------------------
+
+Package: pluggy
+Version: 1.5.0
+License: MIT License
+Author: Holger Krekel
+URL: https://github.com/pytest-dev/pluggy
+--------------------------------------------------------------------------------
+
+Package: pre-commit
+Version: 3.5.0
+License: MIT License
+Author: Anthony Sottile
+URL: https://github.com/pre-commit/pre-commit
+--------------------------------------------------------------------------------
+
+Package: pytest
+Version: 8.3.5
+License: MIT License
+Author: Holger Krekel, Bruno Oliveira, Ronny Pfannschmidt, Floris Bruynooghe, Brianna Laugher, Florian Bruhin, Others (See AUTHORS)
+URL: https://docs.pytest.org/en/latest/
+--------------------------------------------------------------------------------
+
+Package: pytest-cov
+Version: 5.0.0
+License: MIT License
+Author: Marc Schlaich
+URL: https://github.com/pytest-dev/pytest-cov
+--------------------------------------------------------------------------------
+
+Package: PyYAML
+Version: 6.0.3
+License: MIT License
+Author: Kirill Simonov
+URL: https://pyyaml.org/
+--------------------------------------------------------------------------------
+
+Package: ruff
+Version: 0.14.7
+License: MIT License
+Author: "Astral Software Inc." <hey@astral.sh>
+URL: https://docs.astral.sh/ruff
+--------------------------------------------------------------------------------
+
+Package: types-PyYAML
+Version: 6.0.12.20241230
+License: Apache Software License
+Author: UNKNOWN
+URL: https://github.com/python/typeshed
+--------------------------------------------------------------------------------
+
+Package: typing_extensions
+Version: 4.13.2
+License: UNKNOWN
+Author: "Guido van Rossum, Jukka Lehtosalo, Łukasz Langa, Michael Lee" <levkivskyi@gmail.com>
+URL: https://github.com/python/typing_extensions
+--------------------------------------------------------------------------------
+
+Package: virtualenv
+Version: 20.35.4
+License: MIT License
+Author: UNKNOWN
+URL: https://github.com/pypa/virtualenv
+--------------------------------------------------------------------------------
+
+Package: xfile-context
+Version: 0.0.5
+License: Proprietary
+Author: Henru Wang <noreply@example.com>
+URL: UNKNOWN
+--------------------------------------------------------------------------------
+
+Package: xfile-context
+Version: 0.0.5
+License: Proprietary
+Author: Henru Wang <noreply@example.com>
+URL: UNKNOWN
+--------------------------------------------------------------------------------

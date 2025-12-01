@@ -26,15 +26,25 @@ repos:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
 
+  # License verification (before tests, so it runs early)
+  - repo: local
+    hooks:
+      - id: check-licenses
+        name: Check dependency licenses
+        entry: python3 scripts/check_licenses.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
   # Type checking
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.13.0
+  - repo: local
     hooks:
       - id: mypy
-        additional_dependencies: [pytest>=8.0.0]
-        args: []
-        pass_filenames: false
+        name: mypy (type checking)
         entry: bash -c 'mypy src/ --strict && mypy tests/ --no-strict-optional --allow-untyped-defs --allow-incomplete-defs'
+        language: system
+        types: [python]
+        pass_filenames: false
 
   # Fast unit tests
   - repo: local

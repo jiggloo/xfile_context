@@ -26,7 +26,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 
-dependencies = []
+dependencies = [
+    "PyYAML>=6.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -37,10 +39,15 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
     "pre-commit>=3.5.0",
+    "pip-licenses>=4.3.0",
+    "types-PyYAML>=6.0",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+xfile_context = ["py.typed"]
 
 [tool.black]
 line-length = 100
