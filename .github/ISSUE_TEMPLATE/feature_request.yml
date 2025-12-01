@@ -33,7 +33,7 @@ body:
     id: requirements
     attributes:
       label: Requirements
-      description: List the functional and non-functional requirements (e.g., FR-1, FR-2, NFR-3)
+      description: List the functional (FR-) and non-functional (NFR-) requirements from the PRD/TDD
       placeholder: |
         - FR-10: System must detect import statements
         - FR-11: Support Python, JavaScript, and TypeScript

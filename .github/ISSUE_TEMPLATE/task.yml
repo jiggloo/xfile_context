@@ -11,6 +11,8 @@ body:
       value: |
         Use this template for development tasks derived from the TDD or for breaking down larger features.
 
+        **Note**: Replace "X.X" in the title above with your actual task number (e.g., "Task 1.2: Implement parser").
+
   - type: input
     id: task-number
     attributes:

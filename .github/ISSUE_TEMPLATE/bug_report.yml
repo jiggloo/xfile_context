@@ -53,11 +53,11 @@ body:
   - type: input
     id: tdd-section
     attributes:
-      label: TDD Section Reference
-      description: Link to the relevant TDD section where this functionality is specified
-      placeholder: "Section X.X.X or docs/tdd.md#heading"
+      label: TDD Section Reference (if known)
+      description: Link to the relevant TDD section where this functionality is specified. If unknown, describe the affected feature and we'll help identify it.
+      placeholder: "Section X.X.X or docs/tdd.md#heading, or describe the feature area"
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: environment

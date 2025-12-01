@@ -23,8 +23,8 @@ body:
   - type: input
     id: document-section
     attributes:
-      label: PRD/TDD Section Reference
-      description: Link to the relevant section in PRD or TDD
+      label: Document Section Reference
+      description: Link to the relevant section in PRD or TDD (provide whichever is most relevant)
       placeholder: "Section X.X.X or docs/prd.md#heading or docs/tdd.md#heading"
     validations:
       required: true
