@@ -1,0 +1,36 @@
+# Copyright (c) 2025 Henru Wang
+# All rights reserved.
+
+name: Comprehensive Tests
+
+# Run on pull requests only (required check for merge)
+on:
+  pull_request:
+
+jobs:
+  test-matrix:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run full test suite
+        run: pytest --tb=short
