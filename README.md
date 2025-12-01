@@ -88,7 +88,7 @@ The main branch is protected with rules enforced via GitHub API. To configure or
 
 **Protection Rules**:
 - Pull requests required (no direct commits)
-- At least 1 approval required
+- Approvals: 0 required (suitable for solo development)
 - All 9 CI checks must pass (lightweight + comprehensive)
 - Branches must be up-to-date before merging
 - Rules enforced for administrators

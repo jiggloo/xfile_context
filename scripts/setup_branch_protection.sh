@@ -50,7 +50,7 @@ gh api \
   },
   "enforce_admins": true,
   "required_pull_request_reviews": {
-    "required_approving_review_count": 1,
+    "required_approving_review_count": 0,
     "dismiss_stale_reviews": false,
     "require_code_owner_reviews": false
   },
@@ -65,7 +65,7 @@ echo "✓ Branch protection rules configured successfully!"
 echo ""
 echo "Protection summary:"
 echo "  - Pull requests required (no direct commits)"
-echo "  - At least 1 approval required"
+echo "  - Approvals: 0 required (suitable for solo development)"
 echo "  - Required status checks: 9 checks (formatting, linting, type checking, tests)"
 echo "  - Branches must be up-to-date before merging"
 echo "  - Rules enforced for administrators"
