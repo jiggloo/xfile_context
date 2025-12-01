@@ -91,6 +91,9 @@ class Relationship:
 
         Returns:
             Relationship instance.
+
+        Raises:
+            KeyError: If required fields are missing from data dict.
         """
         return cls(
             source_file=data["source_file"],
@@ -120,7 +123,11 @@ class FileMetadata:
     # Note: has_circular_deps removed (cycle detection deferred to v0.1.1+, see Section 3.5.5)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize to JSON-compatible dict."""
+        """Serialize to JSON-compatible dict.
+
+        Returns:
+            Dictionary with all metadata fields.
+        """
         return {
             "filepath": self.filepath,
             "last_analyzed": self.last_analyzed,
@@ -132,7 +139,17 @@ class FileMetadata:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "FileMetadata":
-        """Deserialize from JSON-compatible dict."""
+        """Deserialize from JSON-compatible dict.
+
+        Args:
+            data: Dictionary containing file metadata fields.
+
+        Returns:
+            FileMetadata instance.
+
+        Raises:
+            KeyError: If required fields are missing from data dict.
+        """
         return cls(
             filepath=data["filepath"],
             last_analyzed=data["last_analyzed"],
@@ -326,7 +343,11 @@ class CacheEntry:
     symbol_name: Optional[str] = None  # Function/class name if applicable
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize to JSON-compatible dict."""
+        """Serialize to JSON-compatible dict.
+
+        Returns:
+            Dictionary with all fields, excluding None values for optional fields.
+        """
         result = {
             "filepath": self.filepath,
             "line_start": self.line_start,
@@ -344,7 +365,17 @@ class CacheEntry:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CacheEntry":
-        """Deserialize from JSON-compatible dict."""
+        """Deserialize from JSON-compatible dict.
+
+        Args:
+            data: Dictionary containing cache entry fields.
+
+        Returns:
+            CacheEntry instance.
+
+        Raises:
+            KeyError: If required fields are missing from data dict.
+        """
         return cls(
             filepath=data["filepath"],
             line_start=data["line_start"],
@@ -374,7 +405,11 @@ class CacheStatistics:
     peak_entry_count: int
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize to JSON-compatible dict."""
+        """Serialize to JSON-compatible dict.
+
+        Returns:
+            Dictionary with all statistics fields.
+        """
         return {
             "hits": self.hits,
             "misses": self.misses,
@@ -388,7 +423,17 @@ class CacheStatistics:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CacheStatistics":
-        """Deserialize from JSON-compatible dict."""
+        """Deserialize from JSON-compatible dict.
+
+        Args:
+            data: Dictionary containing cache statistics fields.
+
+        Returns:
+            CacheStatistics instance.
+
+        Raises:
+            KeyError: If required fields are missing from data dict.
+        """
         return cls(
             hits=data["hits"],
             misses=data["misses"],
