@@ -1,0 +1,98 @@
+# Copyright (c) 2025 Henru Wang
+# All rights reserved.
+
+name: Lightweight Checks
+
+# Run on pull requests and pushes to feature branches
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - main
+      - master
+
+jobs:
+  formatting:
+    name: Code Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install black==24.10.0 isort==5.13.2
+
+      - name: Check formatting with black
+        run: black --check --line-length=100 src/ tests/
+
+      - name: Check import sorting with isort
+        run: isort --check --profile=black --line-length=100 src/ tests/
+
+  linting:
+    name: Linting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff==0.8.4
+
+      - name: Lint with ruff
+        run: ruff check src/ tests/
+
+  type-checking:
+    name: Type Checking
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install mypy==1.13.0 pytest==8.0.0
+
+      - name: Type check with mypy
+        run: |
+          mypy src/ --strict
+          mypy tests/ --no-strict-optional --allow-untyped-defs --allow-incomplete-defs
+
+  fast-tests:
+    name: Fast Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run fast tests
+        run: pytest -m "not slow" --tb=short
