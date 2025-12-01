@@ -10,6 +10,7 @@ Tests cover:
 - Graph export functionality
 """
 
+import pytest
 
 from xfile_context.models import Relationship, RelationshipType
 from xfile_context.storage import InMemoryStore, RelationshipStore
@@ -379,8 +380,8 @@ class TestInMemoryStore:
         """
         store = InMemoryStore()
 
-        # Add relationships
-        for i in range(100):
+        # Add relationships (start from 1 to avoid line_number=0)
+        for i in range(1, 101):
             rel = Relationship(
                 source_file=f"file_{i}.py",
                 target_file="common.py",
@@ -460,3 +461,111 @@ class TestInMemoryStore:
         assert retrieved[0].target_symbol == "foo"
         assert retrieved[0].target_line == 50
         assert retrieved[0].metadata == {"context": "conditional"}
+
+
+class TestInMemoryStoreValidation:
+    """Tests for input validation in InMemoryStore."""
+
+    def test_reject_empty_source_file(self):
+        """Test that empty source file path is rejected."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="",
+            target_file="b.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+
+        with pytest.raises(ValueError, match="File paths cannot be empty"):
+            store.add_relationship(rel)
+
+    def test_reject_empty_target_file(self):
+        """Test that empty target file path is rejected."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="a.py",
+            target_file="",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+
+        with pytest.raises(ValueError, match="File paths cannot be empty"):
+            store.add_relationship(rel)
+
+    def test_reject_directory_traversal_in_source(self):
+        """Test that directory traversal in source file is rejected."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="../../etc/passwd",
+            target_file="b.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+
+        with pytest.raises(ValueError, match="Directory traversal not allowed"):
+            store.add_relationship(rel)
+
+    def test_reject_directory_traversal_in_target(self):
+        """Test that directory traversal in target file is rejected."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="a.py",
+            target_file="../../../root/.ssh/id_rsa",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+
+        with pytest.raises(ValueError, match="Directory traversal not allowed"):
+            store.add_relationship(rel)
+
+    def test_reject_negative_line_number(self):
+        """Test that negative line number is rejected."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="a.py",
+            target_file="b.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=-1,
+        )
+
+        with pytest.raises(ValueError, match="Line number must be positive"):
+            store.add_relationship(rel)
+
+    def test_reject_zero_line_number(self):
+        """Test that zero line number is rejected."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="a.py",
+            target_file="b.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=0,
+        )
+
+        with pytest.raises(ValueError, match="Line number must be positive"):
+            store.add_relationship(rel)
+
+    def test_reject_empty_relationship_type(self):
+        """Test that empty relationship type is rejected."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="a.py",
+            target_file="b.py",
+            relationship_type="",
+            line_number=1,
+        )
+
+        with pytest.raises(ValueError, match="Relationship type cannot be empty"):
+            store.add_relationship(rel)
+
+    def test_validation_on_remove(self):
+        """Test that validation also applies to remove_relationship."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="../../etc/passwd",
+            target_file="b.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+
+        with pytest.raises(ValueError, match="Directory traversal not allowed"):
+            store.remove_relationship(rel)

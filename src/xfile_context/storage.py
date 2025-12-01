@@ -104,7 +104,11 @@ class InMemoryStore(RelationshipStore):
     - Fast O(1) lookups for file-based queries
     - No persistence across sessions
     - Memory-efficient data structures
-    - Thread-safe operations (if needed in future)
+
+    Limitations:
+    - NOT thread-safe: Designed for single-threaded use only
+    - Target scale: 10K files, <500MB memory
+    - No automatic cleanup of removed relationships (None markers remain until clear())
 
     Data Structure:
     - _relationships: List of all relationships
@@ -123,6 +127,33 @@ class InMemoryStore(RelationshipStore):
         # A file appears in index if it's source OR target of a relationship
         self._by_file: Dict[str, List[int]] = {}
 
+    def _validate_relationship(self, rel: Relationship) -> None:
+        """Validate relationship data for basic security and correctness.
+
+        Args:
+            rel: Relationship to validate.
+
+        Raises:
+            ValueError: If relationship data is invalid.
+        """
+        # Validate file paths are not empty
+        if not rel.source_file or not rel.target_file:
+            raise ValueError("File paths cannot be empty")
+
+        # Validate no directory traversal patterns
+        if ".." in rel.source_file or ".." in rel.target_file:
+            raise ValueError(
+                f"Directory traversal not allowed: {rel.source_file} -> {rel.target_file}"
+            )
+
+        # Validate line number is positive
+        if rel.line_number <= 0:
+            raise ValueError(f"Line number must be positive: {rel.line_number}")
+
+        # Validate relationship type is not empty
+        if not rel.relationship_type:
+            raise ValueError("Relationship type cannot be empty")
+
     def add_relationship(self, rel: Relationship) -> None:
         """Add a relationship to storage.
 
@@ -132,8 +163,12 @@ class InMemoryStore(RelationshipStore):
             rel: Relationship to add.
 
         Raises:
+            ValueError: If relationship data is invalid.
             Exception: If memory allocation fails (unlikely at target scale).
         """
+        # Validate input
+        self._validate_relationship(rel)
+
         # Add to main storage
         idx = len(self._relationships)
         self._relationships.append(rel)
@@ -162,8 +197,12 @@ class InMemoryStore(RelationshipStore):
             rel: Relationship to remove.
 
         Raises:
+            ValueError: If relationship data is invalid.
             Exception: If storage operation fails.
         """
+        # Validate input
+        self._validate_relationship(rel)
+
         # Find matching relationship
         for i, stored_rel in enumerate(self._relationships):
             if (
