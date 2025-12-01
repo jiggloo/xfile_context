@@ -1,0 +1,86 @@
+# Copyright (c) 2025 Henru Wang
+# All rights reserved.
+
+name: Question
+description: Clarification question about PRD or TDD
+title: "[Question]: "
+labels: ["question", "initial"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to ask clarifying questions about the PRD or TDD, or to document open questions that need resolution.
+
+  - type: input
+    id: question-reference
+    attributes:
+      label: Open Question Reference
+      description: Reference to open question in PRD/TDD if applicable (e.g., "Q-1", "Q-5")
+      placeholder: "Q-X (if applicable)"
+    validations:
+      required: false
+
+  - type: input
+    id: document-section
+    attributes:
+      label: PRD/TDD Section Reference
+      description: Link to the relevant section in PRD or TDD
+      placeholder: "Section X.X.X or docs/prd.md#heading or docs/tdd.md#heading"
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Your question or clarification request
+      placeholder: State your question clearly and concisely
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why is this question important? What are you trying to accomplish?
+      placeholder: Provide context about why this clarification is needed
+    validations:
+      required: true
+
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Rationale
+      description: What prompted this question? Any relevant observations or concerns?
+      placeholder: Explain what led to this question
+    validations:
+      required: false
+
+  - type: textarea
+    id: proposed-answer
+    attributes:
+      label: Proposed Answer (Optional)
+      description: If you have a proposed answer or suggestion, provide it here
+      placeholder: Your proposed resolution or interpretation
+    validations:
+      required: false
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: How does the answer to this question affect the implementation?
+      placeholder: Describe the implementation impact of different possible answers
+    validations:
+      required: false
+
+  - type: textarea
+    id: related-issues
+    attributes:
+      label: Related Issues
+      description: Link to any related issues or tasks that depend on this question
+      placeholder: |
+        - #42
+        - #43
+    validations:
+      required: false
