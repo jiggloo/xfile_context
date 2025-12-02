@@ -18,11 +18,11 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
-from src.xfile_context.analyzers.python_analyzer import PythonAnalyzer
-from src.xfile_context.detectors.registry import DetectorRegistry
-from src.xfile_context.file_watcher import FileWatcher
-from src.xfile_context.graph_updater import GraphUpdater
-from src.xfile_context.models import FileMetadata, Relationship, RelationshipGraph, RelationshipType
+from xfile_context.analyzers.python_analyzer import PythonAnalyzer
+from xfile_context.detectors.registry import DetectorRegistry
+from xfile_context.file_watcher import FileWatcher
+from xfile_context.graph_updater import GraphUpdater
+from xfile_context.models import FileMetadata, Relationship, RelationshipGraph, RelationshipType
 
 
 @pytest.fixture
