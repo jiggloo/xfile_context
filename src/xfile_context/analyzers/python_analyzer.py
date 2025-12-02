@@ -326,8 +326,9 @@ class PythonAnalyzer:
         )
         self.graph.set_file_metadata(filepath, metadata)
 
-        # Clear dynamic pattern warnings from detectors after collecting
-        self._clear_dynamic_pattern_warnings()
+        # Note: Dynamic pattern warnings are NOT cleared here.
+        # The service's _collect_detector_warnings() handles collecting and clearing.
+        # This allows the service to aggregate warnings across analysis calls.
 
         if dynamic_pattern_types:
             logger.debug(

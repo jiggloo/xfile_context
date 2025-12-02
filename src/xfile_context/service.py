@@ -40,6 +40,7 @@ from .file_watcher import FileWatcher
 from .graph_updater import GraphUpdater
 from .models import Relationship, RelationshipGraph, RelationshipType
 from .storage import GraphExport, InMemoryStore, RelationshipStore
+from .warning_formatter import StructuredWarning, WarningEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +213,9 @@ class CrossFileContextService:
         # Lazy initialization to avoid network calls in __init__
         self._token_encoder: Optional[tiktoken.Encoding] = None
 
+        # Initialize warning emitter for dynamic pattern warnings (TDD Section 3.9.3)
+        self._warning_emitter = WarningEmitter()
+
         logger.info(f"CrossFileContextService initialized with project_root={self._project_root}")
 
     def _validate_filepath(self, filepath: str) -> None:
@@ -274,7 +278,12 @@ class CrossFileContextService:
             True if analysis succeeded, False otherwise.
         """
         self._validate_filepath(file_path)
-        return self._analyzer.analyze_file(file_path)
+        result = self._analyzer.analyze_file(file_path)
+
+        # Collect warnings from dynamic pattern detectors
+        self._collect_detector_warnings()
+
+        return result
 
     def analyze_directory(self, directory_path: Optional[str] = None) -> Dict[str, Any]:
         """Analyze all Python files in a directory.
@@ -317,6 +326,10 @@ class CrossFileContextService:
                 stats["failed"] += 1
 
         stats["elapsed_ms"] = (time.time() - start_time) * 1000
+
+        # Collect warnings from dynamic pattern detectors
+        self._collect_detector_warnings()
+
         logger.info(
             f"Analyzed {stats['total']} files in {stats['elapsed_ms']:.1f}ms: "
             f"{stats['success']} success, {stats['failed']} failed, {stats['skipped']} skipped"
@@ -1046,6 +1059,95 @@ class CrossFileContextService:
             self.cache.invalidate(file_path)
         else:
             self.cache.clear()
+
+    def _collect_detector_warnings(self) -> None:
+        """Collect warnings from all dynamic pattern detectors.
+
+        Called after analysis to gather warnings from detectors and add them
+        to the warning emitter. Clears detector warnings after collection.
+        """
+        from .detectors.dynamic_pattern_detector import DynamicPatternDetector
+
+        for detector in self._detector_registry.get_detectors():
+            if isinstance(detector, DynamicPatternDetector):
+                warnings = detector.get_warnings()
+                self._warning_emitter.add_warnings(warnings)
+                detector.clear_warnings()
+
+    def get_warnings(self, include_test_modules: bool = False) -> List[StructuredWarning]:
+        """Get all collected dynamic pattern warnings.
+
+        Returns structured warnings in FR-38 format from analysis.
+
+        Args:
+            include_test_modules: If True, include warnings from test modules.
+                                  Default is False (suppressed per TDD Section 3.9.1).
+
+        Returns:
+            List of StructuredWarning objects.
+        """
+        return self._warning_emitter.get_warnings(include_test_modules=include_test_modules)
+
+    def get_warnings_json(self, include_test_modules: bool = False, indent: int = 2) -> str:
+        """Get all collected warnings as JSON.
+
+        Returns warnings in machine-parseable JSON format per FR-38.
+
+        Args:
+            include_test_modules: If True, include warnings from test modules.
+            indent: Indentation level for pretty printing.
+
+        Returns:
+            JSON string of warnings array.
+        """
+        return self._warning_emitter.to_json(
+            include_test_modules=include_test_modules, indent=indent
+        )
+
+    def get_warnings_human_readable(self, include_test_modules: bool = False) -> str:
+        """Get all collected warnings as human-readable text.
+
+        Returns warnings in human-readable format per TDD Section 3.9.3.
+
+        Args:
+            include_test_modules: If True, include warnings from test modules.
+
+        Returns:
+            Human-readable string with all warnings.
+        """
+        return self._warning_emitter.to_human_readable(include_test_modules=include_test_modules)
+
+    def get_warnings_by_file(
+        self, file_path: str, include_test_modules: bool = False
+    ) -> List[StructuredWarning]:
+        """Get warnings for a specific file.
+
+        Args:
+            file_path: File path to filter by.
+            include_test_modules: If True, include warnings from test modules.
+
+        Returns:
+            List of StructuredWarning objects for the specified file.
+        """
+        self._validate_filepath(file_path)
+        return self._warning_emitter.get_warnings_by_file(
+            file_path, include_test_modules=include_test_modules
+        )
+
+    def get_warning_summary(self, include_test_modules: bool = False) -> Dict[str, int]:
+        """Get summary of warnings by type.
+
+        Args:
+            include_test_modules: If True, include warnings from test modules.
+
+        Returns:
+            Dictionary mapping pattern types to counts.
+        """
+        return self._warning_emitter.summary(include_test_modules=include_test_modules)
+
+    def clear_warnings(self) -> None:
+        """Clear all collected warnings."""
+        self._warning_emitter.clear()
 
     def shutdown(self) -> None:
         """Shutdown the service and cleanup resources.
