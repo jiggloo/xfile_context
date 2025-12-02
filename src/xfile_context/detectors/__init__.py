@@ -13,11 +13,13 @@ Components:
 - ConditionalImportDetector: Detector for conditional import relationships
 - WildcardImportDetector: Detector for wildcard import relationships
 - FunctionCallDetector: Detector for simple function call relationships
+- ClassInheritanceDetector: Detector for class inheritance relationships
 
 See TDD Section 3.4.4 for detailed specifications.
 """
 
 from .base import RelationshipDetector
+from .class_inheritance_detector import ClassInheritanceDetector
 from .conditional_import_detector import ConditionalImportDetector
 from .function_call_detector import FunctionCallDetector
 from .import_detector import ImportDetector
@@ -31,4 +33,5 @@ __all__ = [
     "ConditionalImportDetector",
     "WildcardImportDetector",
     "FunctionCallDetector",
+    "ClassInheritanceDetector",
 ]
