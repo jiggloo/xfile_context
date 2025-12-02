@@ -57,7 +57,7 @@ class ImportDetector(RelationshipDetector):
     See TDD Section 3.4.4 for detector interface specifications.
     """
 
-    # Python standard library modules (Python 3.9+)
+    # Python standard library modules
     # This is a curated list of common stdlib modules
     STDLIB_MODULES = frozenset(
         [

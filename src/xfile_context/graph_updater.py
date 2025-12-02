@@ -91,7 +91,7 @@ class GraphUpdater:
         try:
             path = Path(filepath).resolve()
             # Check if path is within project_root
-            # Python 3.8 compatible - use try/except on relative_to
+            # Use try/except on relative_to for path normalization
             try:
                 path.relative_to(self.project_root)
                 return True

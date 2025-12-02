@@ -61,7 +61,7 @@ class FunctionCallDetector(RelationshipDetector):
     See TDD Section 3.4.4 for detector interface specifications.
     """
 
-    # Python built-in functions (Python 3.8+)
+    # Python built-in functions
     BUILTIN_FUNCTIONS = frozenset(dir(builtins))
 
     def __init__(self) -> None:

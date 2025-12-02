@@ -141,7 +141,7 @@ class CrossFileContextMCPServer:
         @self.mcp.tool()  # type: ignore[misc]
         async def get_relationship_graph(
             ctx: Context[ServerSession, None],
-        ):  # type: ignore[no-untyped-def]
+        ) -> Dict[str, Any]:
             """Export the complete relationship graph for the codebase.
 
             Returns the full graph of file relationships including imports,
@@ -163,7 +163,11 @@ class CrossFileContextMCPServer:
                 graph_export = self.service.get_relationship_graph()
 
                 # Format response per MCP specification
-                response = graph_export.to_dict()
+                # graph_export can be GraphExport or dict depending on store
+                if hasattr(graph_export, "to_dict"):
+                    response = graph_export.to_dict()  # type: ignore[attr-defined]
+                else:
+                    response = graph_export  # type: ignore[assignment]
 
                 await ctx.info(
                     f"Graph exported: {len(response.get('nodes', []))} nodes, "
