@@ -567,6 +567,141 @@ class CrossFileContextService:
 
         return sorted(dependencies, key=sort_key)
 
+    def _get_function_line_count(self, file_path: str, start_line: int) -> Optional[int]:
+        """Get the number of lines in a function definition.
+
+        Per EC-12, used to detect large functions (200+ lines) that need
+        truncation notes in context injection.
+
+        Args:
+            file_path: Path to file containing the function.
+            start_line: Line number where function definition starts.
+
+        Returns:
+            Number of lines in the function, or None if cannot be determined.
+        """
+        try:
+            # Read enough lines to capture the function (max 500 for reasonable bound)
+            max_lines = 500
+            line_range = (start_line, start_line + max_lines)
+            content = self.cache.get(file_path, line_range)
+            lines = content.splitlines()
+
+            if not lines:
+                return None
+
+            # Find the indentation of the function definition
+            first_line = lines[0]
+            base_indent = len(first_line) - len(first_line.lstrip())
+
+            # Count lines until we find a line at the same or lower indentation
+            # (excluding blank lines and comments at the start)
+            line_count = 1
+
+            for line in lines[1:]:
+                line_count += 1
+                stripped = line.strip()
+
+                # Skip blank lines
+                if not stripped:
+                    continue
+
+                # Check if we've exited the function
+                current_indent = len(line) - len(line.lstrip())
+                if current_indent <= base_indent and stripped and not stripped.startswith("#"):
+                    # We've found a line at the same or lower indentation
+                    # This marks the end of the function
+                    return line_count - 1  # Don't count the line outside
+
+            # If we reached the end, return the count
+            return line_count
+
+        except OSError:
+            return None
+
+    def _get_function_signature_with_docstring(
+        self, file_path: str, target_symbol: Optional[str], target_line: Optional[int]
+    ) -> Tuple[Optional[str], Optional[str], Optional[Tuple[int, int]]]:
+        """Extract function/class signature with optional docstring.
+
+        Per TDD Section 3.8.3, includes:
+        - Function signature (def/class line)
+        - Short docstring (<50 chars) if present
+        - Line range for implementation pointer
+
+        Args:
+            file_path: Path to file containing the symbol.
+            target_symbol: Name of function/class to find.
+            target_line: Line number where symbol is defined.
+
+        Returns:
+            Tuple of (signature, docstring, line_range):
+            - signature: The def/class signature or None if not found
+            - docstring: Short docstring (<50 chars) or None
+            - line_range: (start_line, end_line) tuple or None
+        """
+        if not target_line:
+            return None, None, None
+
+        try:
+            # Read more lines to capture signature + docstring + some body
+            lines_context = 20
+            line_range = (target_line, target_line + lines_context)
+
+            content = self.cache.get(file_path, line_range)
+            lines = content.splitlines()
+
+            # Find the signature line (def/class)
+            signature_lines: List[str] = []
+            in_signature = False
+            signature_end_idx = 0
+
+            for idx, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped.startswith(("def ", "class ", "async def ")):
+                    in_signature = True
+                    signature_lines.append(line.rstrip())
+                    if stripped.endswith(":"):
+                        signature_end_idx = idx
+                        break
+                elif in_signature:
+                    signature_lines.append(line.rstrip())
+                    if stripped.endswith(":"):
+                        signature_end_idx = idx
+                        break
+
+            if not signature_lines:
+                return None, None, None
+
+            signature = "\n".join(signature_lines)
+
+            # Look for docstring after signature
+            docstring = None
+            if signature_end_idx + 1 < len(lines):
+                next_line = lines[signature_end_idx + 1].strip()
+                # Check for docstring (single-line only for brevity)
+                if next_line.startswith(('"""', "'''")):
+                    quote = next_line[:3]
+                    if next_line.endswith(quote) and len(next_line) > 6:
+                        # Single-line docstring
+                        doc_content = next_line[3:-3].strip()
+                        if len(doc_content) < 50:  # Per TDD 3.8.3: <50 chars
+                            docstring = doc_content
+
+            # Calculate line range for this function
+            func_line_count = self._get_function_line_count(file_path, target_line)
+            if func_line_count:
+                impl_range = (target_line, target_line + func_line_count - 1)
+            else:
+                impl_range = (target_line, target_line)
+
+            return signature, docstring, impl_range
+
+        except OSError as e:
+            logger.debug(f"Could not read signature from {file_path}: {e}")
+
+        return None, None, None
+
     def _get_function_signature(
         self, file_path: str, target_symbol: Optional[str], target_line: Optional[int]
     ) -> Optional[str]:
@@ -580,42 +715,75 @@ class CrossFileContextService:
         Returns:
             Signature string or None if not found.
         """
-        if not target_line:
-            return None
+        signature, _, _ = self._get_function_signature_with_docstring(
+            file_path, target_symbol, target_line
+        )
+        return signature
 
-        try:
-            # Try to get from cache first
-            lines_context = 10  # Get up to 10 lines for signature
-            line_range = (target_line, target_line + lines_context)
+    def _get_cache_age_minutes(self, file_path: str) -> Optional[float]:
+        """Get the cache age for a file in minutes.
 
-            content = self.cache.get(file_path, line_range)
-            lines = content.splitlines()
+        Per TDD Section 3.8.3, used for "last read: X minutes ago" indicator.
 
-            # Find the signature line (def/class)
-            signature_lines: List[str] = []
-            in_signature = False
+        Args:
+            file_path: Path to file to check.
 
-            for line in lines:
-                stripped = line.strip()
-                if stripped.startswith(("def ", "class ", "async def ")):
-                    in_signature = True
-                    signature_lines.append(line.rstrip())
-                    # Check if signature is complete (ends with :)
-                    if stripped.endswith(":"):
-                        break
-                elif in_signature:
-                    # Continuation of multi-line signature
-                    signature_lines.append(line.rstrip())
-                    if stripped.endswith(":"):
-                        break
-
-            if signature_lines:
-                return "\n".join(signature_lines)
-
-        except OSError as e:
-            logger.debug(f"Could not read signature from {file_path}: {e}")
-
+        Returns:
+            Age in minutes, or None if not cached.
+        """
+        # Check file watcher timestamps for last known access time
+        timestamp = self._file_watcher.get_timestamp(file_path)
+        if timestamp:
+            age_minutes = (time.time() - timestamp) / 60
+            return age_minutes
         return None
+
+    def _check_deleted_files(self, dependencies: List[Relationship]) -> Tuple[List[str], Set[str]]:
+        """Check for dependencies on deleted files.
+
+        Per EC-14, detects when target files have been deleted and
+        generates appropriate warnings.
+
+        Args:
+            dependencies: List of relationships to check.
+
+        Returns:
+            Tuple of (warning_messages, deleted_file_paths).
+        """
+        warnings: List[str] = []
+        deleted_files: Set[str] = set()
+
+        for rel in dependencies:
+            target_path = Path(rel.target_file)
+
+            # Check if file is marked as deleted in metadata
+            metadata = self._graph.get_file_metadata(rel.target_file)
+            if metadata and metadata.deleted:
+                if rel.target_file not in deleted_files:
+                    deleted_files.add(rel.target_file)
+                    # Format deletion time if available
+                    if metadata.deletion_time:
+                        from datetime import datetime
+
+                        deletion_dt = datetime.fromtimestamp(metadata.deletion_time)
+                        deletion_str = deletion_dt.strftime("%Y-%m-%d %H:%M")
+                        warnings.append(
+                            f"⚠️ Note: This file imports from {target_path.name} "
+                            f"which was deleted on {deletion_str}"
+                        )
+                    else:
+                        warnings.append(
+                            f"⚠️ Note: This file imports from {target_path.name} "
+                            f"which was deleted"
+                        )
+            # Also check if file physically exists
+            elif not target_path.exists() and rel.target_file not in deleted_files:
+                deleted_files.add(rel.target_file)
+                warnings.append(
+                    f"⚠️ Note: This file imports from {target_path.name} " f"which no longer exists"
+                )
+
+        return warnings, deleted_files
 
     def _assemble_context(
         self, target_file: str, dependencies: List[Relationship]
@@ -623,7 +791,14 @@ class CrossFileContextService:
         """Assemble context snippets from dependencies.
 
         Implements context assembly from TDD Section 3.8.3 and 3.8.4.
-        Includes high-usage function warnings (FR-19, FR-20) and token metrics.
+        Format includes:
+        - Header: [Cross-File Context]
+        - Cache age indicator (last read: X minutes ago)
+        - Dependency summary
+        - Recent definitions with signatures and docstrings
+        - Implementation line ranges
+        - Special cases: wildcards (EC-4), large functions (EC-12), deleted files (EC-14)
+        - High-usage function warnings (FR-19, FR-20)
 
         Args:
             target_file: File being read.
@@ -642,6 +817,10 @@ class CrossFileContextService:
 
         # Identify high-usage symbols for warnings (FR-19, FR-20)
         high_usage_symbols = self._get_high_usage_symbols(dependencies)
+
+        # Check for deleted files (EC-14)
+        deleted_warnings, deleted_files = self._check_deleted_files(dependencies)
+        warnings.extend(deleted_warnings)
 
         # Group by target file for summary
         files_imported: Dict[str, List[Relationship]] = {}
@@ -671,43 +850,48 @@ class CrossFileContextService:
 
         context_parts.append("")
 
-        # Recent definitions section
-        context_parts.append("Recent definitions:")
+        # Calculate overall cache age (use oldest cached dependency)
+        cache_ages = []
+        for rel in prioritized:
+            age = self._get_cache_age_minutes(rel.target_file)
+            if age is not None:
+                cache_ages.append(age)
+
+        # Recent definitions section with cache age indicator (TDD 3.8.3)
+        if cache_ages:
+            max_age = max(cache_ages)
+            if max_age < 1:
+                age_str = "just now"
+            elif max_age < 60:
+                age_str = f"{int(max_age)} minute{'s' if int(max_age) != 1 else ''} ago"
+            else:
+                hours = int(max_age / 60)
+                age_str = f"{hours} hour{'s' if hours != 1 else ''} ago"
+            context_parts.append(f"Recent definitions (last read: {age_str}):")
+        else:
+            context_parts.append("Recent definitions:")
         context_parts.append("")
 
         snippets_added = 0
         max_snippets = 10  # Reasonable limit per file
         warned_symbols: Set[Tuple[str, str]] = set()  # Track symbols we've warned about
 
+        # Large function threshold (EC-12)
+        large_function_threshold = 200
+
         for rel in prioritized:
             if snippets_added >= max_snippets:
                 break
 
-            # Get signature for this dependency
-            signature = self._get_function_signature(
-                rel.target_file, rel.target_symbol, rel.target_line
-            )
-
-            if signature:
-                context_parts.append(f"From {Path(rel.target_file).name}:{rel.target_line or '?'}")
-                context_parts.append(signature)
-
-                # Add implementation pointer
-                context_parts.append(
-                    f"    # Implementation in {Path(rel.target_file).name}:{rel.target_line or '?'}"
-                )
+            # Skip deleted files in snippet generation (EC-14)
+            if rel.target_file in deleted_files:
+                # Add a note about the deleted file
+                context_parts.append(f"From {Path(rel.target_file).name}:{rel.line_number}")
+                context_parts.append("    # ⚠️ File was deleted")
+                context_parts.append(f"    # Last known location: {rel.target_file}")
                 context_parts.append("")
                 snippets_added += 1
-
-                # Check for high-usage function warning (FR-19, FR-20)
-                if rel.target_symbol:
-                    symbol_key = (rel.target_file, rel.target_symbol)
-                    if symbol_key in high_usage_symbols and symbol_key not in warned_symbols:
-                        usage_count = high_usage_symbols[symbol_key]
-                        warnings.append(
-                            f"⚠️ Note: `{rel.target_symbol}()` is used in {usage_count} files"
-                        )
-                        warned_symbols.add(symbol_key)
+                continue
 
             # Check for wildcard imports (EC-4)
             if rel.relationship_type == RelationshipType.WILDCARD_IMPORT:
@@ -725,6 +909,58 @@ class CrossFileContextService:
                     warnings.append(
                         f"⚠️ Wildcard import from {rel.target_file} at line {rel.line_number}"
                     )
+                continue
+
+            # Get signature with docstring and line range
+            signature, docstring, impl_range = self._get_function_signature_with_docstring(
+                rel.target_file, rel.target_symbol, rel.target_line
+            )
+
+            if signature:
+                target_name = Path(rel.target_file).name
+                context_parts.append(f"From {target_name}:{rel.target_line or '?'}")
+                context_parts.append(signature)
+
+                # Add docstring if present and short (TDD 3.8.3: <50 chars)
+                if docstring:
+                    context_parts.append(f'    """{docstring}"""')
+
+                # Check for large function (EC-12)
+                if impl_range:
+                    start_line, end_line = impl_range
+                    line_count = end_line - start_line + 1
+
+                    if line_count >= large_function_threshold:
+                        # Large function - add truncation note
+                        context_parts.append(
+                            f"    # Function is {line_count}+ lines, showing signature only"
+                        )
+                        context_parts.append(
+                            f"    # Full definition: {target_name}:{start_line}-{end_line}"
+                        )
+                    else:
+                        # Normal function - show implementation range
+                        context_parts.append(
+                            f"    # Implementation in {target_name}:{start_line}-{end_line}"
+                        )
+                else:
+                    # Fallback if no range available
+                    context_parts.append(
+                        f"    # Implementation in {target_name}:{rel.target_line or '?'}"
+                    )
+
+                context_parts.append("")
+                snippets_added += 1
+
+                # Check for high-usage function warning (FR-19, FR-20)
+                if rel.target_symbol:
+                    symbol_key = (rel.target_file, rel.target_symbol)
+                    if symbol_key in high_usage_symbols and symbol_key not in warned_symbols:
+                        usage_count = high_usage_symbols[symbol_key]
+                        warnings.append(
+                            f"⚠️ Note: `{rel.target_symbol}()` is used in {usage_count} files"
+                        )
+                        warned_symbols.add(symbol_key)
 
         context_parts.append("---")
 

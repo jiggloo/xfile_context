@@ -939,3 +939,571 @@ class TestCrossFileContextServiceIntegration:
             assert stats["total"] >= 1
 
             service.shutdown()
+
+
+class TestContextInjectionFormatting:
+    """Tests for context injection formatting (T-2.2, TDD Section 3.8.3)."""
+
+    def test_format_header_present(self):
+        """Test that [Cross-File Context] header is present."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            rel = Relationship(
+                source_file=str(Path(tmpdir) / "main.py"),
+                target_file=str(Path(tmpdir) / "utils.py"),
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="helper",
+                target_line=5,
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            Path(tmpdir, "utils.py").write_text(
+                "# Line 1\n# Line 2\n# Line 3\n# Line 4\n" "def helper():\n    pass\n"
+            )
+            Path(tmpdir, "main.py").write_text("from utils import helper\n")
+
+            result = service.read_file_with_context(str(Path(tmpdir) / "main.py"))
+
+            assert "[Cross-File Context]" in result.injected_context
+            service.shutdown()
+
+    def test_format_separator_present(self):
+        """Test that --- separator is present at end of context."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            rel = Relationship(
+                source_file=str(Path(tmpdir) / "main.py"),
+                target_file=str(Path(tmpdir) / "utils.py"),
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="helper",
+                target_line=5,
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            Path(tmpdir, "utils.py").write_text(
+                "# Line 1\n# Line 2\n# Line 3\n# Line 4\n" "def helper():\n    pass\n"
+            )
+            Path(tmpdir, "main.py").write_text("from utils import helper\n")
+
+            result = service.read_file_with_context(str(Path(tmpdir) / "main.py"))
+
+            # Separator should be at the end
+            assert result.injected_context.strip().endswith("---")
+            service.shutdown()
+
+    def test_format_dependency_summary(self):
+        """Test that dependency summary section is present."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            rel = Relationship(
+                source_file=str(Path(tmpdir) / "main.py"),
+                target_file=str(Path(tmpdir) / "utils.py"),
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="helper",
+                target_line=5,
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            Path(tmpdir, "utils.py").write_text(
+                "# Line 1\n# Line 2\n# Line 3\n# Line 4\n" "def helper():\n    pass\n"
+            )
+            Path(tmpdir, "main.py").write_text("from utils import helper\n")
+
+            result = service.read_file_with_context(str(Path(tmpdir) / "main.py"))
+
+            assert "This file imports from:" in result.injected_context
+            assert "utils.py:" in result.injected_context
+            service.shutdown()
+
+    def test_format_implementation_line_range(self):
+        """Test that implementation shows line range (start-end)."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            rel = Relationship(
+                source_file=str(Path(tmpdir) / "main.py"),
+                target_file=str(Path(tmpdir) / "utils.py"),
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="helper",
+                target_line=5,
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create a multi-line function
+            Path(tmpdir, "utils.py").write_text(
+                "# Line 1\n# Line 2\n# Line 3\n# Line 4\n"
+                "def helper():\n"
+                "    x = 1\n"
+                "    y = 2\n"
+                "    return x + y\n"
+            )
+            Path(tmpdir, "main.py").write_text("from utils import helper\n")
+
+            result = service.read_file_with_context(str(Path(tmpdir) / "main.py"))
+
+            # Should show line range like "5-8" instead of just "5"
+            assert "# Implementation in utils.py:" in result.injected_context
+            # The format should include a range with hyphen
+            assert (
+                "-"
+                in result.injected_context.split("# Implementation in utils.py:")[1].split("\n")[0]
+            )
+            service.shutdown()
+
+    def test_format_short_docstring_included(self):
+        """Test that short docstrings (<50 chars) are included."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            rel = Relationship(
+                source_file=str(Path(tmpdir) / "main.py"),
+                target_file=str(Path(tmpdir) / "utils.py"),
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="helper",
+                target_line=5,
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create function with short docstring
+            Path(tmpdir, "utils.py").write_text(
+                "# Line 1\n# Line 2\n# Line 3\n# Line 4\n"
+                "def helper():\n"
+                '    """Short docstring."""\n'
+                "    pass\n"
+            )
+            Path(tmpdir, "main.py").write_text("from utils import helper\n")
+
+            result = service.read_file_with_context(str(Path(tmpdir) / "main.py"))
+
+            # Should include the short docstring
+            assert "Short docstring" in result.injected_context
+            service.shutdown()
+
+    def test_format_long_docstring_excluded(self):
+        """Test that long docstrings (>=50 chars) are excluded."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            rel = Relationship(
+                source_file=str(Path(tmpdir) / "main.py"),
+                target_file=str(Path(tmpdir) / "utils.py"),
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="helper",
+                target_line=5,
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create function with long docstring (>50 chars)
+            long_doc = "This is a very long docstring that exceeds fifty characters easily"
+            Path(tmpdir, "utils.py").write_text(
+                "# Line 1\n# Line 2\n# Line 3\n# Line 4\n"
+                f"def helper():\n"
+                f'    """{long_doc}"""\n'
+                "    pass\n"
+            )
+            Path(tmpdir, "main.py").write_text("from utils import helper\n")
+
+            result = service.read_file_with_context(str(Path(tmpdir) / "main.py"))
+
+            # Should NOT include the long docstring
+            assert long_doc not in result.injected_context
+            service.shutdown()
+
+    def test_wildcard_import_note(self):
+        """Test that wildcard imports have limitation note (EC-4)."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            rel = Relationship(
+                source_file=str(Path(tmpdir) / "main.py"),
+                target_file=str(Path(tmpdir) / "utils.py"),
+                relationship_type=RelationshipType.WILDCARD_IMPORT,
+                line_number=1,
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            Path(tmpdir, "utils.py").write_text("def helper():\n    pass\n")
+            Path(tmpdir, "main.py").write_text("from utils import *\n")
+
+            result = service.read_file_with_context(str(Path(tmpdir) / "main.py"))
+
+            # Should have wildcard limitation note
+            assert "Wildcard import" in result.injected_context
+            assert "specific function tracking unavailable" in result.injected_context
+            service.shutdown()
+
+    def test_large_function_truncation_note(self):
+        """Test that large functions (200+ lines) have truncation note (EC-12)."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            rel = Relationship(
+                source_file=str(Path(tmpdir) / "main.py"),
+                target_file=str(Path(tmpdir) / "large.py"),
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="large_func",
+                target_line=1,
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create a very large function (200+ lines)
+            lines = ["def large_func():"]
+            for i in range(250):
+                lines.append(f"    x{i} = {i}")
+            lines.append("    return x0")
+            Path(tmpdir, "large.py").write_text("\n".join(lines))
+            Path(tmpdir, "main.py").write_text("from large import large_func\n")
+
+            result = service.read_file_with_context(str(Path(tmpdir) / "main.py"))
+
+            # Should have truncation note for large function
+            assert "lines" in result.injected_context
+            assert "showing signature only" in result.injected_context
+            service.shutdown()
+
+    def test_deleted_file_warning(self):
+        """Test that deleted file warning is emitted (EC-14)."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            utils_path = str(Path(tmpdir) / "utils.py")
+            main_path = str(Path(tmpdir) / "main.py")
+
+            rel = Relationship(
+                source_file=main_path,
+                target_file=utils_path,
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="helper",
+                target_line=5,
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create main file but NOT utils.py (simulates deleted file)
+            Path(main_path).write_text("from utils import helper\n")
+            # Don't create utils.py - it's "deleted"
+
+            result = service.read_file_with_context(main_path)
+
+            # Should have warning about deleted/missing file
+            assert any("no longer exists" in w or "was deleted" in w for w in result.warnings)
+            service.shutdown()
+
+    def test_deleted_file_context_note(self):
+        """Test that deleted files show note in context (EC-14)."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            utils_path = str(Path(tmpdir) / "utils.py")
+            main_path = str(Path(tmpdir) / "main.py")
+
+            rel = Relationship(
+                source_file=main_path,
+                target_file=utils_path,
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="helper",
+                target_line=5,
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create main file but NOT utils.py
+            Path(main_path).write_text("from utils import helper\n")
+
+            result = service.read_file_with_context(main_path)
+
+            # Should have note in context about deleted file
+            assert (
+                "File was deleted" in result.injected_context
+                or "Last known location" in result.injected_context
+            )
+            service.shutdown()
+
+    def test_cache_age_indicator_present(self):
+        """Test that cache age indicator is shown when available."""
+        import time
+
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            utils_path = str(Path(tmpdir) / "utils.py")
+            main_path = str(Path(tmpdir) / "main.py")
+
+            rel = Relationship(
+                source_file=main_path,
+                target_file=utils_path,
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="helper",
+                target_line=5,
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create files
+            Path(utils_path).write_text(
+                "# Line 1\n# Line 2\n# Line 3\n# Line 4\n" "def helper():\n    pass\n"
+            )
+            Path(main_path).write_text("from utils import helper\n")
+
+            # Simulate that file was accessed recently
+            service._file_watcher.file_event_timestamps[utils_path] = (
+                time.time() - 60
+            )  # 1 minute ago
+
+            result = service.read_file_with_context(main_path)
+
+            # Should have cache age indicator like "last read: 1 minute ago"
+            assert "last read:" in result.injected_context
+            service.shutdown()
+
+    def test_cache_age_indicator_just_now(self):
+        """Test that cache age shows 'just now' for very recent reads."""
+        import time
+
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            utils_path = str(Path(tmpdir) / "utils.py")
+            main_path = str(Path(tmpdir) / "main.py")
+
+            rel = Relationship(
+                source_file=main_path,
+                target_file=utils_path,
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="helper",
+                target_line=5,
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create files
+            Path(utils_path).write_text(
+                "# Line 1\n# Line 2\n# Line 3\n# Line 4\n" "def helper():\n    pass\n"
+            )
+            Path(main_path).write_text("from utils import helper\n")
+
+            # Simulate that file was accessed just now (< 1 minute)
+            service._file_watcher.file_event_timestamps[utils_path] = (
+                time.time() - 10
+            )  # 10 seconds ago
+
+            result = service.read_file_with_context(main_path)
+
+            # Should show "just now"
+            assert "just now" in result.injected_context
+            service.shutdown()
+
+    def test_multiple_dependencies_formatting(self):
+        """Test that multiple dependencies are formatted correctly."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+            other_path = str(Path(tmpdir) / "other.py")
+
+            # Add two dependencies
+            rel1 = Relationship(
+                source_file=main_path,
+                target_file=utils_path,
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="helper",
+                target_line=5,
+            )
+            rel2 = Relationship(
+                source_file=main_path,
+                target_file=other_path,
+                relationship_type=RelationshipType.IMPORT,
+                line_number=2,
+                target_symbol="other_func",
+                target_line=3,
+            )
+            graph.add_relationship(rel1)
+            graph.add_relationship(rel2)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create files
+            Path(utils_path).write_text(
+                "# Line 1\n# Line 2\n# Line 3\n# Line 4\n" "def helper():\n    pass\n"
+            )
+            Path(other_path).write_text("# Line 1\n# Line 2\n" "def other_func():\n    pass\n")
+            Path(main_path).write_text("from utils import helper\nfrom other import other_func\n")
+
+            result = service.read_file_with_context(main_path)
+
+            # Both dependencies should be in the summary
+            assert "utils.py:" in result.injected_context
+            assert "other.py:" in result.injected_context
+            service.shutdown()
+
+
+class TestFunctionSignatureExtraction:
+    """Tests for function signature extraction with docstrings and line ranges."""
+
+    def test_get_function_signature_with_docstring_basic(self):
+        """Test basic signature extraction."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            # Create a file with a simple function
+            test_file = Path(tmpdir) / "test.py"
+            test_file.write_text(
+                "def my_func(a, b):\n" '    """Short doc."""\n' "    return a + b\n"
+            )
+
+            sig, doc, impl_range = service._get_function_signature_with_docstring(
+                str(test_file), "my_func", 1
+            )
+
+            assert sig is not None
+            assert "def my_func(a, b):" in sig
+            assert doc == "Short doc."
+            assert impl_range is not None
+            service.shutdown()
+
+    def test_get_function_signature_multiline(self):
+        """Test multi-line signature extraction."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            # Create a file with a multi-line signature
+            test_file = Path(tmpdir) / "test.py"
+            test_file.write_text(
+                "def complex_func(\n"
+                "    arg1: int,\n"
+                "    arg2: str,\n"
+                "    arg3: bool = True\n"
+                ") -> dict:\n"
+                "    return {}\n"
+            )
+
+            sig, _, _ = service._get_function_signature_with_docstring(
+                str(test_file), "complex_func", 1
+            )
+
+            assert sig is not None
+            assert "def complex_func(" in sig
+            assert "arg1: int" in sig
+            assert ") -> dict:" in sig
+            service.shutdown()
+
+    def test_get_function_line_count(self):
+        """Test function line counting."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            # Create a file with a 10-line function
+            test_file = Path(tmpdir) / "test.py"
+            lines = ["def my_func():"]
+            for i in range(8):
+                lines.append(f"    x{i} = {i}")
+            lines.append("    return x0")
+            lines.append("")
+            lines.append("# Next function")
+            lines.append("def other():")
+            lines.append("    pass")
+            test_file.write_text("\n".join(lines))
+
+            count = service._get_function_line_count(str(test_file), 1)
+
+            # Should count lines from def to return
+            assert count is not None
+            assert count >= 9  # def + 8 assignments + return
+            service.shutdown()
+
+    def test_async_function_signature(self):
+        """Test async function signature extraction."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            test_file = Path(tmpdir) / "test.py"
+            test_file.write_text(
+                "async def async_func():\n"
+                '    """Async function."""\n'
+                "    return await something()\n"
+            )
+
+            sig, doc, _ = service._get_function_signature_with_docstring(
+                str(test_file), "async_func", 1
+            )
+
+            assert sig is not None
+            assert "async def async_func():" in sig
+            assert doc == "Async function."
+            service.shutdown()
+
+    def test_class_signature(self):
+        """Test class signature extraction."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            test_file = Path(tmpdir) / "test.py"
+            test_file.write_text(
+                "class MyClass:\n"
+                '    """A simple class."""\n'
+                "    def __init__(self):\n"
+                "        pass\n"
+            )
+
+            sig, doc, _ = service._get_function_signature_with_docstring(
+                str(test_file), "MyClass", 1
+            )
+
+            assert sig is not None
+            assert "class MyClass:" in sig
+            assert doc == "A simple class."
+            service.shutdown()
