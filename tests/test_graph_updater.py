@@ -392,3 +392,49 @@ class TestAtomicUpdates:
         deps = graph.get_dependencies(str(test_file))
         assert len(deps) == 1
         assert deps[0].target_file == "/other.py"
+
+
+class TestPathValidation:
+    """Test path validation security checks."""
+
+    def test_reject_path_outside_project_root(self, updater, temp_project_dir):
+        """Test that paths outside project root are rejected."""
+        # Try to update a file outside project root
+        outside_path = "/etc/passwd"
+
+        # All three operations should reject the path
+        assert updater.update_on_modify(outside_path) is False
+        assert updater.update_on_delete(outside_path) is False
+        assert updater.update_on_create(outside_path) is False
+
+    def test_reject_path_traversal_attempt(self, updater, temp_project_dir):
+        """Test that path traversal attacks are blocked."""
+        # Attempt path traversal
+        traversal_path = str(temp_project_dir / ".." / ".." / "etc" / "passwd")
+
+        # Should be rejected
+        assert updater.update_on_modify(traversal_path) is False
+        assert updater.update_on_delete(traversal_path) is False
+        assert updater.update_on_create(traversal_path) is False
+
+    def test_accept_valid_path_in_project_root(self, updater, temp_project_dir):
+        """Test that valid paths within project root are accepted."""
+        # Create a valid file in project root
+        valid_file = temp_project_dir / "valid.py"
+        valid_file.write_text("x = 1\n")
+
+        # Validation should pass (update success depends on file content)
+        result = updater.update_on_modify(str(valid_file))
+        assert result is True  # File is valid Python
+
+    def test_accept_path_in_subdirectory(self, updater, temp_project_dir):
+        """Test that paths in subdirectories are accepted."""
+        # Create subdirectory with file
+        subdir = temp_project_dir / "subdir"
+        subdir.mkdir()
+        sub_file = subdir / "test.py"
+        sub_file.write_text("y = 2\n")
+
+        # Should be accepted
+        result = updater.update_on_create(str(sub_file))
+        assert result is True

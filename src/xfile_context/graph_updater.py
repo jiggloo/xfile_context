@@ -30,12 +30,6 @@ from .models import FileMetadata, RelationshipGraph
 logger = logging.getLogger(__name__)
 
 
-class GraphUpdateError(Exception):
-    """Raised when graph update operation fails."""
-
-    pass
-
-
 class GraphUpdater:
     """Coordinates incremental updates to relationship graph.
 
@@ -45,9 +39,12 @@ class GraphUpdater:
     - File creation: Analyze new file and add to graph
 
     Atomicity Guarantee:
-    - Updates complete fully or not at all
+    - Updates complete fully or not at all (except unparseable files - see below)
     - On failure: Rollback changes, log error, graph remains consistent
     - No partial state visible to graph queries
+    - Exception: When file becomes unparseable, old relationships are removed
+      as they are stale - this is the only case where rollback doesn't restore
+      original state
 
     Performance:
     - Target: <200ms per file update (NFR-1)
@@ -77,6 +74,33 @@ class GraphUpdater:
         self.graph = graph
         self.analyzer = analyzer
         self.file_watcher = file_watcher
+        self.project_root = Path(file_watcher.project_root).resolve()
+
+    def _validate_filepath(self, filepath: str) -> bool:
+        """Validate that filepath is within project root (security check).
+
+        Prevents path traversal attacks by ensuring all file operations
+        stay within the monitored project directory.
+
+        Args:
+            filepath: Path to validate.
+
+        Returns:
+            True if filepath is within project_root, False otherwise.
+        """
+        try:
+            path = Path(filepath).resolve()
+            # Check if path is within project_root
+            # Python 3.8 compatible - use try/except on relative_to
+            try:
+                path.relative_to(self.project_root)
+                return True
+            except ValueError:
+                # path is not relative to project_root
+                return False
+        except OSError as e:
+            logger.error(f"Invalid filepath during validation: {filepath}: {e}")
+            return False
 
     def update_on_modify(self, filepath: str) -> bool:
         """Update graph when file is modified.
@@ -99,6 +123,11 @@ class GraphUpdater:
             <200ms per file (NFR-1)
         """
         start_time = time.time()
+
+        # Security: Validate filepath is within project root
+        if not self._validate_filepath(filepath):
+            logger.warning(f"Rejecting update for file outside project root: {filepath}")
+            return False
 
         try:
             logger.debug(f"Updating graph for modified file: {filepath}")
@@ -173,6 +202,11 @@ class GraphUpdater:
         """
         start_time = time.time()
 
+        # Security: Validate filepath is within project root
+        if not self._validate_filepath(filepath):
+            logger.warning(f"Rejecting delete for file outside project root: {filepath}")
+            return False
+
         try:
             logger.debug(f"Updating graph for deleted file: {filepath}")
 
@@ -229,6 +263,11 @@ class GraphUpdater:
             <200ms per file (NFR-1)
         """
         start_time = time.time()
+
+        # Security: Validate filepath is within project root
+        if not self._validate_filepath(filepath):
+            logger.warning(f"Rejecting create for file outside project root: {filepath}")
+            return False
 
         try:
             logger.debug(f"Updating graph for created file: {filepath}")
