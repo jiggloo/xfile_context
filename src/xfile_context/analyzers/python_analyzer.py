@@ -1,0 +1,340 @@
+# Copyright (c) 2025 Henru Wang
+# All rights reserved.
+
+"""Python AST analyzer for relationship extraction.
+
+This module implements the AST parsing pipeline for Python files with:
+- File reading with UTF-8/latin-1 fallback encoding
+- File size limits (EC-17)
+- AST parsing with error recovery (EC-18)
+- Timeout and recursion depth limits
+- Detector dispatch pattern (DD-1)
+
+See TDD Section 3.5.1 for detailed specifications.
+"""
+
+import ast
+import concurrent.futures
+import logging
+import time
+from pathlib import Path
+from typing import List, Optional
+
+from ..detectors.registry import DetectorRegistry
+from ..models import FileMetadata, Relationship, RelationshipGraph
+
+logger = logging.getLogger(__name__)
+
+
+class ASTParsingTimeoutError(Exception):
+    """Raised when AST parsing exceeds timeout limit."""
+
+    pass
+
+
+class PythonAnalyzer:
+    """AST-based analyzer for Python files.
+
+    This analyzer implements the AST parsing pipeline (TDD Section 3.5.1):
+    1. File Reading: UTF-8 with latin-1 fallback, file size limits
+    2. AST Parsing: Python ast module with error recovery
+    3. Detector Dispatch: Priority-based invocation of detector plugins
+    4. Relationship Storage: Store results in RelationshipGraph
+
+    Error Recovery (EC-18):
+    - Syntax errors: Skip file, log warning, continue with other files
+    - Encoding errors: Try UTF-8 first, fallback to latin-1
+    - Import errors: Track relationship even if module doesn't exist
+    - Partial analysis: Store results from successful detectors
+
+    Performance Considerations:
+    - Parse each file once, run all detectors on single AST traversal
+    - Target: <200ms parsing time for files <5,000 lines (NFR-1)
+
+    See TDD Section 3.4.2 for detailed specifications.
+    """
+
+    # Configuration constants (TDD Section 3.5.1)
+    MAX_FILE_LINES = 10000  # EC-17: Skip files larger than this
+    AST_PARSING_TIMEOUT_SECONDS = 5  # Timeout for parsing a single file
+    AST_MAX_RECURSION_DEPTH = 100  # Maximum AST traversal depth
+
+    def __init__(
+        self,
+        graph: RelationshipGraph,
+        detector_registry: DetectorRegistry,
+        timeout_seconds: int = AST_PARSING_TIMEOUT_SECONDS,
+        max_recursion_depth: int = AST_MAX_RECURSION_DEPTH,
+        max_file_lines: int = MAX_FILE_LINES,
+    ):
+        """Initialize Python analyzer.
+
+        Args:
+            graph: RelationshipGraph to store detected relationships.
+            detector_registry: Registry of detector plugins.
+            timeout_seconds: Timeout for parsing a single file (default: 5).
+            max_recursion_depth: Maximum AST traversal depth (default: 100).
+            max_file_lines: Maximum file size in lines (default: 10000).
+        """
+        self.graph = graph
+        self.detector_registry = detector_registry
+        self.timeout_seconds = timeout_seconds
+        self.max_recursion_depth = max_recursion_depth
+        self.max_file_lines = max_file_lines
+
+    def analyze_file(self, filepath: str) -> bool:
+        """Analyze a Python file and extract relationships.
+
+        This is the main entry point for file analysis. It implements the
+        complete AST parsing pipeline from TDD Section 3.5.1.
+
+        Args:
+            filepath: Absolute path to Python file to analyze.
+
+        Returns:
+            True if analysis succeeded, False if file was skipped or failed.
+
+        Side Effects:
+            - Updates self.graph with detected relationships
+            - Updates file metadata in graph (is_unparseable flag)
+            - Logs warnings for skipped files or errors
+        """
+        # Stage 1: File Reading
+        file_content = self._read_file(filepath)
+        if file_content is None:
+            # File was skipped (too large, encoding error, etc.)
+            return False
+
+        # Stage 2: AST Parsing
+        try:
+            module_ast = self._parse_ast(filepath, file_content)
+            if module_ast is None:
+                # Parsing failed (syntax error, timeout, etc.)
+                self._mark_unparseable(filepath)
+                return False
+        except ASTParsingTimeoutError:
+            logger.warning(
+                f"⚠️ Skipping {filepath}: AST parsing exceeded timeout " f"({self.timeout_seconds}s)"
+            )
+            self._mark_unparseable(filepath)
+            return False
+
+        # Stage 3: Detector Dispatch
+        relationships = self._dispatch_detectors(filepath, module_ast)
+
+        # Stage 4: Relationship Storage
+        self._store_relationships(filepath, relationships)
+
+        return True
+
+    def _read_file(self, filepath: str) -> Optional[str]:
+        """Read file with UTF-8/latin-1 fallback and size limits.
+
+        Implements file reading stage from TDD Section 3.5.1.
+
+        Args:
+            filepath: Absolute path to file to read.
+
+        Returns:
+            File contents as string, or None if file should be skipped.
+
+        Error Recovery (EC-18):
+        - File too large (EC-17): Skip, log warning, return None
+        - Encoding errors: Try UTF-8 first, fallback to latin-1, log if non-UTF-8
+        - File not found: Log error, return None
+        - Permission errors: Log error, return None
+        """
+        try:
+            # Check file size limit (EC-17)
+            path = Path(filepath)
+            if not path.exists():
+                logger.error(f"File not found: {filepath}")
+                return None
+
+            # Count lines before reading entire file
+            with open(filepath, encoding="utf-8", errors="ignore") as f:
+                line_count = sum(1 for _ in f)
+
+            if line_count > self.max_file_lines:
+                logger.warning(
+                    f"⚠️ Skipping analysis of {filepath}: {line_count} lines "
+                    f"exceeds limit ({self.max_file_lines})"
+                )
+                return None
+
+            # Try UTF-8 encoding first
+            try:
+                with open(filepath, encoding="utf-8") as f:
+                    return f.read()
+            except UnicodeDecodeError:
+                # Fallback to latin-1 (accepts all byte values)
+                logger.warning(f"⚠️ File {filepath} is not UTF-8, using latin-1 fallback encoding")
+                with open(filepath, encoding="latin-1") as f:
+                    return f.read()
+
+        except FileNotFoundError:
+            logger.error(f"File not found: {filepath}")
+            return None
+        except PermissionError:
+            logger.error(f"Permission denied reading file: {filepath}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error reading {filepath}: {e}")
+            return None
+
+    def _parse_ast(self, filepath: str, source: str) -> Optional[ast.Module]:
+        """Parse source code into AST with timeout protection.
+
+        Implements AST parsing stage from TDD Section 3.5.1.
+
+        Uses concurrent.futures for cross-platform timeout support (works on
+        both Unix and Windows).
+
+        Args:
+            filepath: Path to file being parsed (for error reporting).
+            source: Source code to parse.
+
+        Returns:
+            AST Module node, or None if parsing failed.
+
+        Raises:
+            ASTParsingTimeoutError: If parsing exceeds timeout limit.
+
+        Error Recovery (EC-18):
+        - Syntax errors: Log warning with line number, return None
+        - Timeout: Raise ASTParsingTimeoutError (caller handles)
+        """
+
+        def _do_parse() -> Optional[ast.Module]:
+            """Internal function to perform the actual parsing."""
+            try:
+                return ast.parse(source, filename=filepath, mode="exec")
+            except SyntaxError as e:
+                logger.warning(f"⚠️ Skipping {filepath}: Syntax error at line {e.lineno}: {e.msg}")
+                return None
+
+        try:
+            # Use ThreadPoolExecutor with timeout for cross-platform support
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_do_parse)
+                try:
+                    result = future.result(timeout=self.timeout_seconds)
+                    return result
+                except concurrent.futures.TimeoutError as e:
+                    # Parsing exceeded timeout limit
+                    raise ASTParsingTimeoutError(
+                        f"AST parsing timeout ({self.timeout_seconds}s)"
+                    ) from e
+        except ASTParsingTimeoutError:
+            # Re-raise timeout for caller to handle
+            raise
+        except Exception as e:
+            # Unexpected parsing error
+            logger.error(f"Unexpected error parsing {filepath}: {e}")
+            return None
+
+    def _dispatch_detectors(self, filepath: str, module_ast: ast.Module) -> List[Relationship]:
+        """Dispatch AST nodes to registered detectors.
+
+        Implements detector dispatch stage from TDD Section 3.5.1.
+
+        This method traverses the AST and invokes all registered detectors
+        for each node in priority order.
+
+        Args:
+            filepath: Path to file being analyzed.
+            module_ast: Root AST node of the module.
+
+        Returns:
+            List of all detected relationships (aggregated from all detectors).
+
+        Error Recovery:
+        - Detector exceptions: Log error, continue with other detectors
+        - Partial analysis: Return relationships from successful detectors
+        """
+        all_relationships: List[Relationship] = []
+        detectors = self.detector_registry.get_detectors()
+
+        # Traverse AST with depth limit
+        def traverse_node(node: ast.AST, depth: int = 0) -> None:
+            """Recursively traverse AST node and invoke detectors.
+
+            Args:
+                node: AST node to process.
+                depth: Current recursion depth (for limit enforcement).
+            """
+            # Check recursion depth limit
+            if depth > self.max_recursion_depth:
+                logger.warning(
+                    f"⚠️ AST traversal depth limit ({self.max_recursion_depth}) "
+                    f"exceeded in {filepath}, skipping subtree"
+                )
+                return
+
+            # Invoke all detectors for this node
+            for detector in detectors:
+                try:
+                    relationships = detector.detect(node, filepath, module_ast)
+                    all_relationships.extend(relationships)
+                except Exception as e:
+                    logger.error(f"Error in detector '{detector.name()}' for {filepath}: {e}")
+                    # Continue with other detectors (partial analysis)
+
+            # Recursively process child nodes
+            for child in ast.iter_child_nodes(node):
+                traverse_node(child, depth + 1)
+
+        # Start traversal from root
+        traverse_node(module_ast)
+
+        return all_relationships
+
+    def _store_relationships(self, filepath: str, relationships: List[Relationship]) -> None:
+        """Store detected relationships in graph.
+
+        Implements relationship storage stage from TDD Section 3.5.1.
+
+        Args:
+            filepath: Path to file that was analyzed.
+            relationships: List of detected relationships to store.
+
+        Side Effects:
+            - Adds relationships to self.graph
+            - Updates file metadata in graph
+            - Deduplicates relationships automatically (graph handles this)
+        """
+        # Remove old relationships for this file (incremental update)
+        self.graph.remove_relationships_for_file(filepath)
+
+        # Add new relationships
+        for rel in relationships:
+            self.graph.add_relationship(rel)
+
+        # Update file metadata
+        metadata = FileMetadata(
+            filepath=filepath,
+            last_analyzed=time.time(),
+            relationship_count=len(relationships),
+            has_dynamic_patterns=False,  # Will be updated by detectors
+            dynamic_pattern_types=[],
+            is_unparseable=False,
+        )
+        self.graph.set_file_metadata(filepath, metadata)
+
+        logger.debug(f"Stored {len(relationships)} relationships for {filepath}")
+
+    def _mark_unparseable(self, filepath: str) -> None:
+        """Mark a file as unparseable in graph metadata.
+
+        Args:
+            filepath: Path to file that failed parsing.
+        """
+        metadata = FileMetadata(
+            filepath=filepath,
+            last_analyzed=time.time(),
+            relationship_count=0,
+            has_dynamic_patterns=False,
+            dynamic_pattern_types=[],
+            is_unparseable=True,  # EC-18: Mark as unparseable
+        )
+        self.graph.set_file_metadata(filepath, metadata)

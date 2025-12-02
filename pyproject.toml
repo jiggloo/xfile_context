@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xfile-context"
-version = "0.0.13"
+version = "0.0.21"
 description = "Cross-File Context Links MCP Server"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -69,3 +69,8 @@ markers = [
     "integration: marks tests as integration tests",
 ]
 addopts = "-v --tb=short"
+
+[tool.mypy]
+mypy_path = "src"
+explicit_package_bases = true
+namespace_packages = true
