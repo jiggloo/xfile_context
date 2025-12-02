@@ -346,6 +346,11 @@ class TestSecurityValidation:
         with pytest.raises(ValueError, match="must be a filename only"):
             WarningLogger(log_dir=temp_log_dir, log_file="subdir/file.jsonl")
 
+    def test_log_file_windows_drive_letter(self, temp_log_dir: Path) -> None:
+        """Test that Windows drive letter in log_file is rejected."""
+        with pytest.raises(ValueError, match="must be a filename only"):
+            WarningLogger(log_dir=temp_log_dir, log_file="C:malicious.jsonl")
+
     def test_valid_log_file_name(self, temp_log_dir: Path) -> None:
         """Test that valid log filename is accepted."""
         logger = WarningLogger(log_dir=temp_log_dir, log_file="custom_warnings.jsonl")

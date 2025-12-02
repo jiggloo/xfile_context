@@ -122,8 +122,9 @@ class WarningLogger:
         self._log_dir = Path(log_dir)
 
         # Validate log_file doesn't contain path components (security)
+        # Check for /, \, and : (Windows drive letters) to prevent path traversal
         log_file = log_file or DEFAULT_WARNING_LOG_FILE
-        if "/" in log_file or "\\" in log_file:
+        if "/" in log_file or "\\" in log_file or ":" in log_file:
             raise ValueError(f"log_file must be a filename only, not a path: {log_file}")
         self._log_file = log_file
 
