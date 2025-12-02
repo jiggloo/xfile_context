@@ -143,3 +143,86 @@ class TestCrossFileContextService:
 
         # Should not raise
         service.shutdown()
+
+
+class TestServiceSecurityValidation:
+    """Security tests for CrossFileContextService.
+
+    Tests path validation to prevent security vulnerabilities like
+    path traversal, control character injection, and DoS attacks.
+    """
+
+    def _create_service(self) -> CrossFileContextService:
+        """Helper to create a service instance for tests."""
+        config = Config()
+        store = InMemoryStore()
+        file_event_timestamps: dict[str, float] = {}
+        cache = WorkingMemoryCache(file_event_timestamps=file_event_timestamps)
+        return CrossFileContextService(config, store, cache)
+
+    def test_path_traversal_rejected(self):
+        """Test that path traversal patterns are rejected."""
+        service = self._create_service()
+
+        with pytest.raises(ValueError, match="Path traversal not allowed"):
+            service.read_file_with_context("../../../etc/passwd")
+
+    def test_path_traversal_middle_rejected(self):
+        """Test that path traversal in the middle of paths is rejected."""
+        service = self._create_service()
+
+        with pytest.raises(ValueError, match="Path traversal not allowed"):
+            service.read_file_with_context("/safe/path/../../../etc/passwd")
+
+    def test_control_characters_rejected(self):
+        """Test that control characters in paths are rejected."""
+        service = self._create_service()
+
+        with pytest.raises(ValueError, match="Invalid characters"):
+            service.read_file_with_context("/path/with\x00null/file.py")
+
+    def test_very_long_path_rejected(self):
+        """Test that very long paths are rejected to prevent DoS."""
+        service = self._create_service()
+
+        long_path = "/a" * 5000  # Exceeds 4096 limit
+
+        with pytest.raises(ValueError, match="Filepath too long"):
+            service.read_file_with_context(long_path)
+
+    def test_large_file_rejected(self):
+        """Test that large files are rejected to prevent DoS."""
+        service = self._create_service()
+
+        with TemporaryDirectory() as tmpdir:
+            large_file = Path(tmpdir) / "large.py"
+            # Create file larger than 10MB limit
+            large_file.write_bytes(b"x" * (11 * 1024 * 1024))
+
+            with pytest.raises(ValueError, match="File too large"):
+                service.read_file_with_context(str(large_file))
+
+    def test_valid_absolute_path_accepted(self):
+        """Test that valid absolute paths are accepted."""
+        service = self._create_service()
+
+        with TemporaryDirectory() as tmpdir:
+            test_file = Path(tmpdir) / "valid.py"
+            test_file.write_text("# Valid file")
+
+            result = service.read_file_with_context(str(test_file))
+            assert result.content == "# Valid file"
+
+    def test_valid_relative_path_accepted(self):
+        """Test that valid relative paths without traversal are accepted."""
+        service = self._create_service()
+
+        with TemporaryDirectory() as tmpdir:
+            subdir = Path(tmpdir) / "src"
+            subdir.mkdir()
+            test_file = subdir / "module.py"
+            test_file.write_text("# Module")
+
+            # Use absolute path since we can't rely on cwd
+            result = service.read_file_with_context(str(test_file))
+            assert result.content == "# Module"

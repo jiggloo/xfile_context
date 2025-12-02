@@ -17,6 +17,10 @@ from .storage import GraphExport, RelationshipStore
 
 logger = logging.getLogger(__name__)
 
+# Security constants
+_MAX_FILEPATH_LENGTH = 4096  # Maximum filepath length to prevent DoS
+_MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB max file size
+
 
 class ReadResult:
     """Result of reading a file with context injection."""
@@ -83,6 +87,31 @@ class CrossFileContextService:
         self.cache = cache
         logger.info("CrossFileContextService initialized (stub)")
 
+    def _validate_filepath(self, filepath: str) -> None:
+        """Validate filepath for security concerns.
+
+        Prevents path traversal attacks and other security issues
+        by validating the filepath before any file operations.
+
+        Args:
+            filepath: Path to validate.
+
+        Raises:
+            ValueError: If filepath contains path traversal patterns,
+                control characters, or exceeds length limits.
+        """
+        # Check for control characters first (null bytes, etc.)
+        if any(ord(c) < 32 and c not in ("\t", "\n", "\r") for c in filepath):
+            raise ValueError("Invalid characters in filepath")
+
+        # Check maximum length to prevent DoS
+        if len(filepath) > _MAX_FILEPATH_LENGTH:
+            raise ValueError(f"Filepath too long: {len(filepath)} > {_MAX_FILEPATH_LENGTH}")
+
+        # Check for path traversal patterns
+        if "/.." in filepath or filepath.startswith("..") or "\\.." in filepath:
+            raise ValueError("Path traversal not allowed")
+
     def read_file_with_context(self, file_path: str) -> ReadResult:
         """Read a file and inject relevant cross-file context.
 
@@ -98,7 +127,11 @@ class CrossFileContextService:
         Raises:
             FileNotFoundError: If file doesn't exist
             PermissionError: If file can't be read
+            ValueError: If path validation fails (traversal, control chars, etc.)
         """
+        # Security: Validate filepath before any operations
+        self._validate_filepath(file_path)
+
         path = Path(file_path)
 
         if not path.exists():
@@ -106,6 +139,14 @@ class CrossFileContextService:
 
         if not path.is_file():
             raise ValueError(f"Path is not a file: {file_path}")
+
+        # Security: Check file size before reading to prevent DoS
+        try:
+            file_size = path.stat().st_size
+            if file_size > _MAX_FILE_SIZE_BYTES:
+                raise ValueError(f"File too large: {file_size} bytes > {_MAX_FILE_SIZE_BYTES}")
+        except OSError as e:
+            raise PermissionError(f"Cannot access file: {file_path}") from e
 
         # Read file content
         try:
