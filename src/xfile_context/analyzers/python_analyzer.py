@@ -9,6 +9,7 @@ This module implements the AST parsing pipeline for Python files with:
 - AST parsing with error recovery (EC-18)
 - Timeout and recursion depth limits
 - Detector dispatch pattern (DD-1)
+- Dynamic pattern detection and metadata aggregation (Section 3.5.4)
 
 See TDD Section 3.5.1 for detailed specifications.
 """
@@ -18,8 +19,9 @@ import concurrent.futures
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set
 
+from ..detectors.dynamic_pattern_detector import DynamicPatternDetector
 from ..detectors.registry import DetectorRegistry
 from ..models import FileMetadata, Relationship, RelationshipGraph
 
@@ -300,7 +302,7 @@ class PythonAnalyzer:
 
         Side Effects:
             - Adds relationships to self.graph
-            - Updates file metadata in graph
+            - Updates file metadata in graph (including dynamic pattern info)
             - Deduplicates relationships automatically (graph handles this)
         """
         # Remove old relationships for this file (incremental update)
@@ -310,18 +312,56 @@ class PythonAnalyzer:
         for rel in relationships:
             self.graph.add_relationship(rel)
 
+        # Aggregate dynamic pattern metadata from detectors (Section 3.5.4)
+        dynamic_pattern_types = self._collect_dynamic_patterns()
+
         # Update file metadata
         metadata = FileMetadata(
             filepath=filepath,
             last_analyzed=time.time(),
             relationship_count=len(relationships),
-            has_dynamic_patterns=False,  # Will be updated by detectors
-            dynamic_pattern_types=[],
+            has_dynamic_patterns=len(dynamic_pattern_types) > 0,
+            dynamic_pattern_types=dynamic_pattern_types,
             is_unparseable=False,
         )
         self.graph.set_file_metadata(filepath, metadata)
 
-        logger.debug(f"Stored {len(relationships)} relationships for {filepath}")
+        # Clear dynamic pattern warnings from detectors after collecting
+        self._clear_dynamic_pattern_warnings()
+
+        if dynamic_pattern_types:
+            logger.debug(
+                f"Stored {len(relationships)} relationships for {filepath} "
+                f"(dynamic patterns: {dynamic_pattern_types})"
+            )
+        else:
+            logger.debug(f"Stored {len(relationships)} relationships for {filepath}")
+
+    def _collect_dynamic_patterns(self) -> List[str]:
+        """Collect detected dynamic pattern types from all detectors.
+
+        Iterates through registered detectors, finds DynamicPatternDetector
+        instances, and aggregates their detected pattern types.
+
+        Returns:
+            List of unique dynamic pattern type strings.
+        """
+        pattern_types: Set[str] = set()
+
+        for detector in self.detector_registry.get_detectors():
+            if isinstance(detector, DynamicPatternDetector):
+                pattern_types.update(detector.get_pattern_types())
+
+        return sorted(pattern_types)
+
+    def _clear_dynamic_pattern_warnings(self) -> None:
+        """Clear dynamic pattern warnings from all detectors.
+
+        Called after storing relationships to reset detector state for next file.
+        """
+        for detector in self.detector_registry.get_detectors():
+            if isinstance(detector, DynamicPatternDetector):
+                detector.clear_warnings()
 
     def _mark_unparseable(self, filepath: str) -> None:
         """Mark a file as unparseable in graph metadata.
