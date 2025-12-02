@@ -16,7 +16,9 @@ Key Responsibilities:
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+import tiktoken
 
 from .analyzers.python_analyzer import PythonAnalyzer
 from .cache import WorkingMemoryCache
@@ -190,6 +192,11 @@ class CrossFileContextService:
 
         # Track if watcher is running
         self._watcher_running = False
+
+        # Initialize tiktoken encoder for token counting (TDD Section 3.8.4)
+        # Use cl100k_base encoding (compatible with Claude/GPT-4)
+        # Lazy initialization to avoid network calls in __init__
+        self._token_encoder: Optional[tiktoken.Encoding] = None
 
         logger.info(f"CrossFileContextService initialized with project_root={self._project_root}")
 
@@ -393,13 +400,118 @@ class CrossFileContextService:
         # Query the graph for relationships where this file is the source
         return self._graph.get_dependencies(file_path)
 
+    def _get_token_encoder(self) -> Optional[tiktoken.Encoding]:
+        """Get or initialize the tiktoken encoder.
+
+        Uses lazy initialization to avoid network calls in __init__.
+        Falls back gracefully if tiktoken is unavailable.
+
+        Returns:
+            tiktoken.Encoding or None if unavailable.
+        """
+        if self._token_encoder is None:
+            try:
+                self._token_encoder = tiktoken.get_encoding("cl100k_base")
+            except Exception as e:
+                logger.warning(f"Failed to initialize tiktoken encoder: {e}")
+                return None
+        return self._token_encoder
+
+    def _count_tokens(self, text: str) -> int:
+        """Count tokens in text using tiktoken.
+
+        Per TDD Section 3.8.4, uses cl100k_base encoding for accurate
+        token counting matching Claude's tokenization.
+
+        Falls back to word-based approximation if tiktoken is unavailable.
+
+        Args:
+            text: Text to count tokens for.
+
+        Returns:
+            Number of tokens in text (approximate if tiktoken unavailable).
+        """
+        encoder = self._get_token_encoder()
+        if encoder is not None:
+            return len(encoder.encode(text))
+
+        # Fallback: approximate token count based on whitespace splitting
+        # This is less accurate but allows operation without network
+        if not text:
+            return 0
+        # Rough approximation: ~1.3 tokens per word for code
+        words = len(text.split())
+        return int(words * 1.3)
+
+    def _get_symbol_usage_count(self, target_file: str, target_symbol: Optional[str]) -> int:
+        """Get the number of files that use a specific symbol.
+
+        Per FR-19, tracks how many files depend on each function/symbol
+        for high-usage detection.
+
+        Args:
+            target_file: File containing the symbol.
+            target_symbol: Symbol name (function/class). If None, counts all
+                          dependencies on the target file.
+
+        Returns:
+            Number of unique files that use this symbol.
+        """
+        if not target_symbol:
+            # Count unique files that depend on target_file for any symbol
+            dependents = self._graph.get_dependents(target_file)
+            return len({rel.source_file for rel in dependents})
+
+        # Count unique files that specifically use this symbol
+        all_relationships = self._graph.get_all_relationships()
+        using_files: Set[str] = set()
+
+        for rel in all_relationships:
+            if rel.target_file == target_file and rel.target_symbol == target_symbol:
+                using_files.add(rel.source_file)
+
+        return len(using_files)
+
+    def _get_high_usage_symbols(
+        self, dependencies: List[Relationship]
+    ) -> Dict[Tuple[str, str], int]:
+        """Identify high-usage symbols from dependencies.
+
+        Per FR-19/FR-20, identifies functions used in 3+ files
+        (configurable via function_usage_warning_threshold).
+
+        Args:
+            dependencies: List of relationships to check.
+
+        Returns:
+            Dict mapping (target_file, target_symbol) to usage count
+            for symbols meeting the threshold.
+        """
+        threshold = self.config.function_usage_warning_threshold
+        high_usage: Dict[Tuple[str, str], int] = {}
+
+        # Check each unique symbol in dependencies
+        seen_symbols: Set[Tuple[str, Optional[str]]] = set()
+        for rel in dependencies:
+            symbol_key = (rel.target_file, rel.target_symbol)
+            if symbol_key in seen_symbols:
+                continue
+            seen_symbols.add(symbol_key)
+
+            if rel.target_symbol:
+                usage_count = self._get_symbol_usage_count(rel.target_file, rel.target_symbol)
+                if usage_count >= threshold:
+                    high_usage[(rel.target_file, rel.target_symbol)] = usage_count
+
+        return high_usage
+
     def _prioritize_dependencies(self, dependencies: List[Relationship]) -> List[Relationship]:
         """Prioritize dependencies for context injection.
 
         Priority order (per TDD Section 3.8.2):
         1. Direct dependencies over transitive
-        2. Recently edited files
-        3. High usage frequency (3+ files)
+        2. Recently edited files (last 10 min)
+        3. High usage frequency (3+ files - FR-19/FR-20)
         4. Relationship type: IMPORT > FUNCTION_CALL > INHERITANCE
 
         Args:
@@ -416,11 +528,13 @@ class CrossFileContextService:
             RelationshipType.CONDITIONAL_IMPORT: 4,
         }
 
-        def sort_key(rel: Relationship) -> Tuple[int, int, int]:
-            # Lower values = higher priority
-            priority = type_priority.get(rel.relationship_type, 99)
+        # Pre-compute high-usage symbols for efficiency
+        high_usage_symbols = self._get_high_usage_symbols(dependencies)
 
-            # Check if target file was recently modified (last 10 min)
+        def sort_key(rel: Relationship) -> Tuple[int, int, int, int, int]:
+            # Lower values = higher priority
+
+            # 1. Check if target file was recently modified (last 10 min)
             timestamp = self._file_watcher.get_timestamp(rel.target_file)
             if timestamp:
                 age_minutes = (time.time() - timestamp) / 60
@@ -428,7 +542,14 @@ class CrossFileContextService:
             else:
                 recently_edited = 1  # Not tracked = lower priority
 
-            return (recently_edited, priority, rel.line_number)
+            # 2. High usage frequency - functions used in 3+ files get priority
+            symbol_key = (rel.target_file, rel.target_symbol)
+            high_usage = 0 if rel.target_symbol and symbol_key in high_usage_symbols else 1
+
+            # 3. Relationship type priority
+            rel_type_priority = type_priority.get(rel.relationship_type, 99)
+
+            return (recently_edited, high_usage, rel_type_priority, rel.line_number, 0)
 
         return sorted(dependencies, key=sort_key)
 
@@ -487,7 +608,8 @@ class CrossFileContextService:
     ) -> Tuple[str, List[str]]:
         """Assemble context snippets from dependencies.
 
-        Implements context assembly from TDD Section 3.8.3.
+        Implements context assembly from TDD Section 3.8.3 and 3.8.4.
+        Includes high-usage function warnings (FR-19, FR-20) and token metrics.
 
         Args:
             target_file: File being read.
@@ -503,6 +625,9 @@ class CrossFileContextService:
 
         # Prioritize dependencies
         prioritized = self._prioritize_dependencies(dependencies)
+
+        # Identify high-usage symbols for warnings (FR-19, FR-20)
+        high_usage_symbols = self._get_high_usage_symbols(dependencies)
 
         # Group by target file for summary
         files_imported: Dict[str, List[Relationship]] = {}
@@ -538,6 +663,7 @@ class CrossFileContextService:
 
         snippets_added = 0
         max_snippets = 10  # Reasonable limit per file
+        warned_symbols: Set[Tuple[str, str]] = set()  # Track symbols we've warned about
 
         for rel in prioritized:
             if snippets_added >= max_snippets:
@@ -559,6 +685,16 @@ class CrossFileContextService:
                 context_parts.append("")
                 snippets_added += 1
 
+                # Check for high-usage function warning (FR-19, FR-20)
+                if rel.target_symbol:
+                    symbol_key = (rel.target_file, rel.target_symbol)
+                    if symbol_key in high_usage_symbols and symbol_key not in warned_symbols:
+                        usage_count = high_usage_symbols[symbol_key]
+                        warnings.append(
+                            f"⚠️ Note: `{rel.target_symbol}()` is used in {usage_count} files"
+                        )
+                        warned_symbols.add(symbol_key)
+
             # Check for wildcard imports (EC-4)
             if rel.relationship_type == RelationshipType.WILDCARD_IMPORT:
                 context_parts.append(f"From {Path(rel.target_file).name}:{rel.line_number}")
@@ -578,7 +714,18 @@ class CrossFileContextService:
 
         context_parts.append("---")
 
-        return "\n".join(context_parts), warnings
+        # Assemble final context
+        context_text = "\n".join(context_parts)
+
+        # Log token count for metrics (TDD Section 3.8.4)
+        # v0.1.0: No limit, gather data on actual token counts
+        token_count = self._count_tokens(context_text)
+        logger.debug(
+            f"Context injection for {target_file}: "
+            f"{len(prioritized)} dependencies, {snippets_added} snippets, {token_count} tokens"
+        )
+
+        return context_text, warnings
 
     def get_relationship_graph(self) -> GraphExport:
         """Get the full relationship graph for export.
