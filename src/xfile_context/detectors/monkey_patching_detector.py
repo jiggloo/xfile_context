@@ -63,7 +63,8 @@ class MonkeyPatchingDetector(DynamicPatternDetector):
         super().__init__(project_root)
         # Cache of imported module names for the current file
         self._imported_modules: Set[str] = set()
-        self._imports_built = False
+        # Separate cache filepath for imports (to avoid conflicting with parent's cache)
+        self._imports_cached_filepath: Optional[str] = None
 
     def _detect_pattern(
         self,
@@ -84,9 +85,9 @@ class MonkeyPatchingDetector(DynamicPatternDetector):
             DynamicPatternWarning if monkey patching detected, None otherwise.
         """
         # Build imports cache if needed (once per file)
-        if not self._imports_built or self._cached_filepath != filepath:
+        if self._imports_cached_filepath != filepath:
+            self._imports_cached_filepath = filepath
             self._build_imports_cache(module_ast)
-            self._imports_built = True
 
         # Pattern: Assign where target is Attribute
         if not isinstance(node, ast.Assign):
