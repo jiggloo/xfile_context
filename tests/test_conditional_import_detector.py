@@ -279,7 +279,11 @@ class TestEdgeCases:
     """Tests for edge cases and special scenarios."""
 
     def test_nested_if_blocks(self):
-        """Test that nested if blocks don't cause issues."""
+        """Test that nested if blocks only apply outer condition.
+
+        Only the imports in the immediate body of TYPE_CHECKING should get
+        the conditional metadata. Nested if blocks are not traversed.
+        """
         detector = ConditionalImportDetector()
         code = """
 from typing import TYPE_CHECKING
@@ -295,10 +299,13 @@ if TYPE_CHECKING:
         for node in ast.walk(tree):
             relationships.extend(detector.detect(node, "/test/file.py", tree))
 
-        # Should detect imports in the outer TYPE_CHECKING block
-        # The inner if is not a recognized pattern, so its imports are also
-        # caught by the outer TYPE_CHECKING block
-        assert len(relationships) >= 2
+        # Should only detect import os (direct child of TYPE_CHECKING body)
+        # import sys is in nested if block and should NOT be detected
+        assert len(relationships) == 1
+        rel = relationships[0]
+        assert rel.target_symbol == "os"
+        assert rel.metadata["conditional"] == "true"
+        assert rel.metadata["condition_type"] == "TYPE_CHECKING"
 
     def test_aliased_conditional_import(self):
         """Test conditional imports with aliases."""

@@ -84,17 +84,20 @@ class ConditionalImportDetector(RelationshipDetector):
             return relationships
 
         # Check if this is a conditional import pattern
-        condition_info = self._analyze_condition(node.test)
+        try:
+            condition_info = self._analyze_condition(node.test)
+        except (AttributeError, TypeError) as e:
+            # Malformed AST node, skip gracefully
+            logger.debug(f"Error analyzing condition in {filepath}: {e}")
+            return relationships
+
         if not condition_info:
             # Not a recognized conditional pattern, skip
             return relationships
 
-        # Walk the body of the If node looking for imports
-        for stmt in ast.walk(node):
-            # Skip the If node itself
-            if stmt is node:
-                continue
-
+        # Process imports only in the immediate body of this If node
+        # Don't use ast.walk() as it would traverse nested If blocks
+        for stmt in node.body:
             # Check if this is an import statement
             if isinstance(stmt, (ast.Import, ast.ImportFrom)):
                 # Use ImportDetector to detect the import and resolve module
@@ -129,7 +132,7 @@ class ConditionalImportDetector(RelationshipDetector):
         """
         # Pattern 1: if TYPE_CHECKING:
         # This is a Name node with id="TYPE_CHECKING"
-        if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
+        if isinstance(test, ast.Name) and hasattr(test, "id") and test.id == "TYPE_CHECKING":
             return {
                 "type": "TYPE_CHECKING",
                 "expr": "TYPE_CHECKING",
@@ -197,26 +200,32 @@ class ConditionalImportDetector(RelationshipDetector):
 
         return "<unknown>"
 
-    def _node_to_string(self, node: ast.AST) -> str:
+    def _node_to_string(self, node: ast.AST, depth: int = 0, max_depth: int = 20) -> str:
         """Convert an AST node to a simple string representation.
 
         Args:
             node: AST node to convert.
+            depth: Current recursion depth (for safety limit).
+            max_depth: Maximum recursion depth to prevent stack overflow.
 
         Returns:
             String representation of the node.
         """
+        # Prevent stack overflow from deeply nested AST structures
+        if depth >= max_depth:
+            return "<too_deep>"
+
         if isinstance(node, ast.Name):
             return node.id
         elif isinstance(node, ast.Attribute):
-            value_str = self._node_to_string(node.value)
+            value_str = self._node_to_string(node.value, depth + 1, max_depth)
             return f"{value_str}.{node.attr}"
         elif isinstance(node, ast.Subscript):
-            value_str = self._node_to_string(node.value)
+            value_str = self._node_to_string(node.value, depth + 1, max_depth)
             # For slices, just use [...] placeholder
             return f"{value_str}[...]"
         elif isinstance(node, ast.Tuple):
-            elements = [self._node_to_string(e) for e in node.elts]
+            elements = [self._node_to_string(e, depth + 1, max_depth) for e in node.elts]
             return f"({', '.join(elements)})"
         elif isinstance(node, ast.Constant):
             return repr(node.value)
