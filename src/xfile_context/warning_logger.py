@@ -99,6 +99,7 @@ class WarningLogger:
         log_dir: Optional[Path] = None,
         log_file: Optional[str] = None,
         size_warning_threshold: int = LOG_SIZE_WARNING_THRESHOLD_BYTES,
+        max_unique_files_tracked: int = 10000,
     ) -> None:
         """Initialize the warning logger.
 
@@ -106,14 +107,28 @@ class WarningLogger:
             log_dir: Directory for log files. If None, uses current working
                     directory + .cross_file_context_logs/
             log_file: Log filename. If None, uses warnings.jsonl.
+                     Must be a simple filename without path separators.
             size_warning_threshold: File size in bytes at which to warn about
                                    large log files. Default is 10MB.
+            max_unique_files_tracked: Maximum number of unique files to track
+                                     in statistics. Prevents memory exhaustion.
+                                     Default is 10000.
+
+        Raises:
+            ValueError: If log_file contains path separators.
         """
         if log_dir is None:
             log_dir = Path.cwd() / DEFAULT_LOG_DIR
         self._log_dir = Path(log_dir)
-        self._log_file = log_file or DEFAULT_WARNING_LOG_FILE
+
+        # Validate log_file doesn't contain path components (security)
+        log_file = log_file or DEFAULT_WARNING_LOG_FILE
+        if "/" in log_file or "\\" in log_file:
+            raise ValueError(f"log_file must be a filename only, not a path: {log_file}")
+        self._log_file = log_file
+
         self._size_warning_threshold = size_warning_threshold
+        self._max_unique_files_tracked = max_unique_files_tracked
 
         # Statistics tracking
         self._warning_count = 0
@@ -188,7 +203,9 @@ class WarningLogger:
         # Update statistics
         self._warning_count += 1
         self._by_type[warning.type] += 1
-        self._by_file[warning.file] += 1
+        # Only track file stats up to limit to prevent memory exhaustion
+        if len(self._by_file) < self._max_unique_files_tracked or warning.file in self._by_file:
+            self._by_file[warning.file] += 1
 
         # Check file size periodically (every 100 warnings)
         if self._warning_count % 100 == 0:
@@ -216,7 +233,9 @@ class WarningLogger:
             # Update statistics
             self._warning_count += 1
             self._by_type[warning.type] += 1
-            self._by_file[warning.file] += 1
+            # Only track file stats up to limit to prevent memory exhaustion
+            if len(self._by_file) < self._max_unique_files_tracked or warning.file in self._by_file:
+                self._by_file[warning.file] += 1
 
         # Flush after batch
         file_handle.flush()

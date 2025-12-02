@@ -328,6 +328,56 @@ class TestWarningStatistics:
         assert len(logger._by_file) == 0
 
 
+class TestSecurityValidation:
+    """Test cases for security-related validation."""
+
+    def test_log_file_path_traversal_forward_slash(self, temp_log_dir: Path) -> None:
+        """Test that log_file with forward slash is rejected."""
+        with pytest.raises(ValueError, match="must be a filename only"):
+            WarningLogger(log_dir=temp_log_dir, log_file="../malicious.jsonl")
+
+    def test_log_file_path_traversal_backslash(self, temp_log_dir: Path) -> None:
+        """Test that log_file with backslash is rejected."""
+        with pytest.raises(ValueError, match="must be a filename only"):
+            WarningLogger(log_dir=temp_log_dir, log_file="..\\malicious.jsonl")
+
+    def test_log_file_path_traversal_nested(self, temp_log_dir: Path) -> None:
+        """Test that nested path in log_file is rejected."""
+        with pytest.raises(ValueError, match="must be a filename only"):
+            WarningLogger(log_dir=temp_log_dir, log_file="subdir/file.jsonl")
+
+    def test_valid_log_file_name(self, temp_log_dir: Path) -> None:
+        """Test that valid log filename is accepted."""
+        logger = WarningLogger(log_dir=temp_log_dir, log_file="custom_warnings.jsonl")
+        assert logger._log_file == "custom_warnings.jsonl"
+
+    def test_max_unique_files_tracked_limit(self, temp_log_dir: Path) -> None:
+        """Test that file statistics tracking is limited."""
+        max_files = 5
+        logger = WarningLogger(log_dir=temp_log_dir, max_unique_files_tracked=max_files)
+
+        # Log warnings from more unique files than the limit
+        for i in range(max_files + 5):
+            logger.log_warning(
+                StructuredWarning(
+                    type="dynamic_dispatch",
+                    file=f"/project/unique_file_{i}.py",
+                    line=1,
+                    severity="warning",
+                    pattern="test",
+                    message="test",
+                    timestamp="2025-01-01T00:00:00Z",
+                )
+            )
+
+        # File tracking should be limited
+        assert len(logger._by_file) <= max_files
+        # But total count should be accurate
+        assert logger._warning_count == max_files + 5
+
+        logger.close()
+
+
 class TestLogFileManagement:
     """Test cases for log file management."""
 
