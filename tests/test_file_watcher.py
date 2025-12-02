@@ -54,6 +54,25 @@ temp_*
 
         assert len(watcher._gitignore_patterns) == 0
 
+    def test_gitignore_pattern_length_validation(self, tmp_path):
+        """Test that overly long gitignore patterns are rejected."""
+        gitignore = tmp_path / ".gitignore"
+
+        # Create patterns of various lengths
+        valid_pattern = "a" * 1000  # Exactly at limit
+        invalid_pattern = "b" * 1001  # Over limit
+
+        gitignore.write_text(f"{valid_pattern}\n{invalid_pattern}\n*.pyc\n")
+
+        watcher = FileWatcher(project_root=str(tmp_path))
+
+        # Valid pattern should be loaded
+        assert valid_pattern in watcher._gitignore_patterns
+        # Invalid pattern should be skipped
+        assert invalid_pattern not in watcher._gitignore_patterns
+        # Normal patterns should still work
+        assert "*.pyc" in watcher._gitignore_patterns
+
     def test_should_ignore_always_ignored(self, tmp_path):
         """Test hardcoded always-ignored patterns (NFR-8)."""
         watcher = FileWatcher(project_root=str(tmp_path))
@@ -73,7 +92,7 @@ temp_*
         """Test sensitive file patterns are ignored."""
         watcher = FileWatcher(project_root=str(tmp_path))
 
-        # Test sensitive files
+        # Test basic sensitive files
         assert watcher.should_ignore(str(tmp_path / ".env"))
         assert watcher.should_ignore(str(tmp_path / ".env.local"))
         assert watcher.should_ignore(str(tmp_path / "credentials.json"))
@@ -81,6 +100,37 @@ temp_*
         assert watcher.should_ignore(str(tmp_path / "certificate.pem"))
         assert watcher.should_ignore(str(tmp_path / "api_key"))
         assert watcher.should_ignore(str(tmp_path / "db_secret"))
+
+        # Test SSH keys (all types)
+        assert watcher.should_ignore(str(tmp_path / ".ssh" / "id_rsa"))
+        assert watcher.should_ignore(str(tmp_path / ".ssh" / "id_dsa"))
+        assert watcher.should_ignore(str(tmp_path / ".ssh" / "id_ecdsa"))
+        assert watcher.should_ignore(str(tmp_path / ".ssh" / "id_ed25519"))
+
+        # Test Java keystores
+        assert watcher.should_ignore(str(tmp_path / "keystore.jks"))
+        assert watcher.should_ignore(str(tmp_path / "app.keystore"))
+        assert watcher.should_ignore(str(tmp_path / "trust.truststore"))
+
+        # Test certificates
+        assert watcher.should_ignore(str(tmp_path / "server.cer"))
+        assert watcher.should_ignore(str(tmp_path / "client.crt"))
+
+        # Test PKCS12 keystores
+        assert watcher.should_ignore(str(tmp_path / "cert.p12"))
+        assert watcher.should_ignore(str(tmp_path / "identity.pfx"))
+
+        # Test secrets files
+        assert watcher.should_ignore(str(tmp_path / "secrets.yaml"))
+        assert watcher.should_ignore(str(tmp_path / "secrets.yml"))
+
+        # Test package manager credentials
+        assert watcher.should_ignore(str(tmp_path / ".npmrc"))
+        assert watcher.should_ignore(str(tmp_path / ".pypirc"))
+
+        # Test cloud credentials
+        assert watcher.should_ignore(str(tmp_path / "gcloud.json"))
+        assert watcher.should_ignore(str(tmp_path / ".aws" / "credentials"))
 
     def test_should_ignore_gitignore_patterns(self, tmp_path):
         """Test .gitignore patterns are respected (NFR-7)."""

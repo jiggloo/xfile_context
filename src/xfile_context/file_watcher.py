@@ -131,7 +131,6 @@ class FileWatcher:
         )
         self.user_ignore_patterns = user_ignore_patterns or set()
 
-        # Thread-safe: GIL ensures atomicity for dict operations
         self.file_event_timestamps: Dict[str, float] = {}
 
         # Load ignore patterns
