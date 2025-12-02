@@ -8,8 +8,9 @@ from .config import Config
 from .service import CrossFileContextService, ReadResult
 from .storage import GraphExport, InMemoryStore, RelationshipStore
 from .warning_formatter import StructuredWarning, WarningEmitter, WarningFormatter
+from .warning_suppression import WarningSuppressionManager
 
-__version__ = "0.0.53"
+__version__ = "0.0.54"
 
 __all__ = [
     "RelationshipStore",
@@ -22,6 +23,7 @@ __all__ = [
     "StructuredWarning",
     "WarningEmitter",
     "WarningFormatter",
+    "WarningSuppressionManager",
 ]
 
 # Conditional import for MCP server (requires Python 3.10+ and mcp package)

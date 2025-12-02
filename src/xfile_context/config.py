@@ -38,6 +38,7 @@ class Config:
         "suppress_decorator_warnings": False,
         "suppress_metaclass_warnings": False,
         "suppress_circular_import_warnings": False,
+        "file_specific_suppressions": {},
         "ignore_patterns": [],
         "function_usage_warning_threshold": 3,
         "metrics_anonymize_paths": False,
@@ -138,6 +139,16 @@ class Config:
         elif key in ["suppress_warnings", "ignore_patterns"]:
             # Must be a list
             return isinstance(value, list)
+        elif key == "file_specific_suppressions":
+            # Must be a dict with string keys and list values
+            if not isinstance(value, dict):
+                return False
+            for filepath, pattern_types in value.items():
+                if not isinstance(filepath, str):
+                    return False
+                if not isinstance(pattern_types, list):
+                    return False
+            return True
 
         return True
 
@@ -224,6 +235,18 @@ class Config:
         """Whether to suppress circular import warnings."""
         value = self._config["suppress_circular_import_warnings"]
         assert isinstance(value, bool)
+        return value
+
+    @property
+    def file_specific_suppressions(self) -> Dict[str, List[str]]:
+        """Per-file pattern-type suppressions.
+
+        Returns:
+            Dictionary mapping file paths to list of suppressed pattern types.
+            Example: {"src/utils.py": ["dynamic_dispatch", "decorator"]}
+        """
+        value = self._config["file_specific_suppressions"]
+        assert isinstance(value, dict)
         return value
 
     @property
