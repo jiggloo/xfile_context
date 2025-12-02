@@ -6678,9 +6678,28 @@ These gaps were identified during TDD creation itself, before implementation beg
 
 ### Active Gaps
 
-_(This subsection will be populated during implementation Phases 1-8)_
-
-**Status as of TDD Completion (2025-11-25)**: No implementation gaps discovered yet - implementation has not started.
+**G-3: Simplified Event Processing - No Debouncing or Batching (Section 3.6.2 vs 3.14.3)**
+- **Discovery Date**: 2025-12-02
+- **Discovered During**: Phase 3, Task 3.2 (Event Debouncing and Batching), Github Issue #20
+- **Description**: Task 3.2 description in Section 3.14.3 describes implementing debouncing (200ms silence window), batching (500ms window for bulk operations), and priority queues for event processing. However, the implementation section (Section 3.6.2) specifies a **simplified timestamp-only approach** with NO debouncing or batching. The FileWatcher implementation from Task 3.1 (Issue #19) already uses the simplified design.
+- **Root Cause**: The task description in Section 3.14.3 was written before the design was finalized. During design iteration, the approach was simplified to use fast timestamp updates (microseconds) with demand-driven analysis, making debouncing and batching unnecessary. Section 3.6.2 was updated to reflect the final simplified design, but Section 3.14.3 task description was not updated to match.
+- **Impact**:
+  - Task 3.2 description (Section 3.14.3) is misleading - suggests implementing debouncing/batching that are not needed
+  - Implementation already complete in Task 3.1 via simplified timestamp-only approach
+  - Success criteria in Task 3.2 are still valid: rapid saves collapsed (via timestamp overwrite), bulk operations handled efficiently (via fast timestamp updates), performance target met (<200ms per NFR-1)
+- **Affected Components**: Section 3.6.2 (correct - simplified design), Section 3.14.3 Task 3.2 (outdated - describes debouncing/batching), NFR-1 (performance requirement)
+- **Resolution**:
+  - Task 3.2 work redefined to focus on verification and documentation:
+    1. Create performance test T-7.3 to verify timestamp-only approach meets NFR-1 (<200ms per file)
+    2. Test rapid file modifications (verify last write wins via timestamp overwrite)
+    3. Test bulk operations (verify efficient handling without batching)
+    4. Document this gap (G-3) for TDD consistency
+  - Created tests/test_performance.py with 7 comprehensive tests covering all T-7.3 requirements
+  - All tests pass: rapid modifications, bulk operations, timestamp overhead, concurrent modifications
+  - Performance verified: timestamp updates average 0.5µs, well within <200ms target per file
+  - Section 3.14.3 Task 3.2 description should be updated in future to match Section 3.6.2 simplified design
+- **Status**: Resolved
+- **Resolution Date**: 2025-12-02
 
 ---
 

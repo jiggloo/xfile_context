@@ -68,6 +68,7 @@ python_functions = ["test_*"]
 markers = [
     "slow: marks tests as slow (deselected with 'not slow')",
     "integration: marks tests as integration tests",
+    "performance: marks tests as performance tests (T-7.3, etc.)",
 ]
 addopts = "-v --tb=short"
 
