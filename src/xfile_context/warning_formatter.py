@@ -28,9 +28,12 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .detectors.dynamic_pattern_detector import DynamicPatternType, DynamicPatternWarning
+
+if TYPE_CHECKING:
+    from .warning_suppression import WarningSuppressionManager
 
 logger = logging.getLogger(__name__)
 
@@ -348,23 +351,41 @@ class WarningEmitter:
     This is the central service for warning management during file analysis.
     It collects warnings from detectors and provides methods to:
     - Aggregate warnings across multiple files/detectors
+    - Apply suppression configuration (TDD Section 3.9.4)
     - Emit warnings to logger
     - Export warnings in JSON or human-readable format
 
     Usage:
+        from xfile_context.warning_suppression import WarningSuppressionManager
+
+        # Without suppression
         emitter = WarningEmitter()
+
+        # With suppression
+        suppression = WarningSuppressionManager.from_config(config)
+        emitter = WarningEmitter(suppression_manager=suppression)
+
         # After detection phase
         for detector in detectors:
             emitter.add_warnings(detector.get_warnings())
-        # Get formatted output
+        # Get formatted output (suppressed warnings excluded)
         json_output = emitter.to_json()
         human_output = emitter.to_human_readable()
     """
 
-    def __init__(self) -> None:
-        """Initialize the warning emitter."""
+    def __init__(
+        self,
+        suppression_manager: Optional["WarningSuppressionManager"] = None,
+    ) -> None:
+        """Initialize the warning emitter.
+
+        Args:
+            suppression_manager: Optional WarningSuppressionManager for filtering warnings.
+                                If not provided, no suppression is applied.
+        """
         self._warnings: List[StructuredWarning] = []
         self._formatter = WarningFormatter()
+        self._suppression_manager = suppression_manager
 
     def add_warning(
         self,
@@ -400,19 +421,33 @@ class WarningEmitter:
             snippet = code_snippets.get(warning.line_number)
             self.add_warning(warning, code_snippet=snippet)
 
-    def get_warnings(self, include_test_modules: bool = False) -> List[StructuredWarning]:
+    def get_warnings(
+        self,
+        include_test_modules: bool = False,
+        apply_suppression: bool = True,
+    ) -> List[StructuredWarning]:
         """Get collected warnings.
 
         Args:
             include_test_modules: If True, include warnings from test modules.
                                   Default is False (suppressed per TDD Section 3.9.1).
+            apply_suppression: If True (default), apply suppression configuration.
+                              Set to False to get all warnings regardless of suppression.
 
         Returns:
             List of StructuredWarning objects.
         """
+        # Start with all or non-test warnings
         if include_test_modules:
-            return self._warnings.copy()
-        return [w for w in self._warnings if not w.is_test_module]
+            warnings = self._warnings.copy()
+        else:
+            warnings = [w for w in self._warnings if not w.is_test_module]
+
+        # Apply suppression if configured and requested
+        if apply_suppression and self._suppression_manager is not None:
+            warnings = self._suppression_manager.filter_warnings(warnings)
+
+        return warnings
 
     def get_warnings_by_file(
         self, filepath: str, include_test_modules: bool = False
@@ -490,6 +525,17 @@ class WarningEmitter:
                 logger.warning(formatted)
             else:
                 logger.info(formatted)
+
+    def set_suppression_manager(
+        self, suppression_manager: Optional["WarningSuppressionManager"]
+    ) -> None:
+        """Set or update the suppression manager.
+
+        Args:
+            suppression_manager: WarningSuppressionManager to use for filtering,
+                                or None to disable suppression.
+        """
+        self._suppression_manager = suppression_manager
 
     def clear(self) -> None:
         """Clear all collected warnings."""
