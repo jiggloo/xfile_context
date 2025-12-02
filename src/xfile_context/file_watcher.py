@@ -322,8 +322,10 @@ class FileWatcher:
             raise RuntimeError("FileWatcher is already running")
 
         self._observer = Observer()
-        self._observer.schedule(self._event_handler, str(self.project_root), recursive=True)  # type: ignore[no-untyped-call]
-        self._observer.start()  # type: ignore[no-untyped-call]
+        self._observer.schedule(  # type: ignore  # watchdog types vary by version
+            self._event_handler, str(self.project_root), recursive=True
+        )
+        self._observer.start()  # type: ignore  # watchdog types vary by version
 
         logger.info(f"FileWatcher started, monitoring {self.project_root}")
 
@@ -333,7 +335,7 @@ class FileWatcher:
         Blocks until observer thread terminates (with timeout).
         """
         if self._observer is not None and self._observer.is_alive():
-            self._observer.stop()  # type: ignore[no-untyped-call]
+            self._observer.stop()  # type: ignore  # watchdog types vary by version
             self._observer.join(timeout=5.0)
             logger.info("FileWatcher stopped")
 
@@ -371,7 +373,8 @@ class _FileEventHandler(FileSystemEventHandler):
         if event.is_directory:
             return
 
-        file_path = event.src_path
+        # Convert path from Union[bytes, str] to str
+        file_path = str(event.src_path)
 
         # Check if file should be ignored
         if self.watcher.should_ignore(file_path):
@@ -429,17 +432,17 @@ class _FileEventHandler(FileSystemEventHandler):
         if not isinstance(event, FileMovedEvent):
             return
 
+        # Convert paths from Union[bytes, str] to str
+        src_path = str(event.src_path)
+        dest_path = str(event.dest_path)
+
         # Old path: Mark as deleted
-        if not self.watcher.should_ignore(event.src_path) and self.watcher.is_supported_file(
-            event.src_path
-        ):
-            self.watcher.update_timestamp(event.src_path)
-            logger.debug(f"Event: moved_from - {event.src_path}")
+        if not self.watcher.should_ignore(src_path) and self.watcher.is_supported_file(src_path):
+            self.watcher.update_timestamp(src_path)
+            logger.debug(f"Event: moved_from - {src_path}")
 
         # New path: Mark as created
-        if not self.watcher.should_ignore(event.dest_path) and self.watcher.is_supported_file(
-            event.dest_path
-        ):
-            self.watcher.update_timestamp(event.dest_path)
-            language = self.watcher.get_language(event.dest_path)
-            logger.debug(f"Event: moved_to - {event.dest_path} (language: {language})")
+        if not self.watcher.should_ignore(dest_path) and self.watcher.is_supported_file(dest_path):
+            self.watcher.update_timestamp(dest_path)
+            language = self.watcher.get_language(dest_path)
+            logger.debug(f"Event: moved_to - {dest_path} (language: {language})")
