@@ -38,6 +38,12 @@ from .detectors import (
 )
 from .file_watcher import FileWatcher
 from .graph_updater import GraphUpdater
+from .injection_logger import (
+    InjectionEvent,
+    InjectionLogger,
+    InjectionStatistics,
+    get_recent_injections,
+)
 from .models import Relationship, RelationshipGraph, RelationshipType
 from .storage import GraphExport, InMemoryStore, RelationshipStore
 from .warning_formatter import StructuredWarning, WarningEmitter
@@ -120,6 +126,7 @@ class CrossFileContextService:
         graph: Optional[RelationshipGraph] = None,
         analyzer: Optional[PythonAnalyzer] = None,
         graph_updater: Optional[GraphUpdater] = None,
+        injection_logger: Optional[InjectionLogger] = None,
     ):
         """Initialize the service with its dependencies.
 
@@ -135,6 +142,7 @@ class CrossFileContextService:
             graph: RelationshipGraph instance (default: creates new graph)
             analyzer: PythonAnalyzer instance (default: creates new analyzer)
             graph_updater: GraphUpdater instance (default: creates new updater)
+            injection_logger: InjectionLogger instance (default: creates new logger)
         """
         self.config = config
         self._project_root = Path(project_root) if project_root else Path.cwd()
@@ -215,6 +223,14 @@ class CrossFileContextService:
 
         # Initialize warning emitter for dynamic pattern warnings (TDD Section 3.9.3)
         self._warning_emitter = WarningEmitter()
+
+        # Initialize injection logger for context injection event logging (TDD Section 3.8.5)
+        # Per FR-26: Log all context injections for analysis
+        self._injection_logger = (
+            injection_logger
+            if injection_logger is not None
+            else InjectionLogger(log_dir=self._project_root / ".cross_file_context_logs")
+        )
 
         logger.info(f"CrossFileContextService initialized with project_root={self._project_root}")
 
@@ -812,6 +828,55 @@ class CrossFileContextService:
 
         return warnings, deleted_files
 
+    def _log_injection_event(
+        self,
+        rel: Relationship,
+        target_file: str,
+        snippet: str,
+        snippet_location: str,
+        token_count: int,
+        context_token_total: int,
+    ) -> None:
+        """Log a context injection event per TDD Section 3.8.5.
+
+        Creates and logs an InjectionEvent with all required fields per FR-27.
+        Events are flushed immediately to ensure durability.
+
+        Args:
+            rel: The relationship being injected.
+            target_file: File being read (where context is injected).
+            snippet: The injected content (signature + docstring).
+            snippet_location: File path and line range of snippet.
+            token_count: Token count of this single snippet.
+            context_token_total: Cumulative token count for all snippets.
+        """
+        # Get cache age in seconds (convert from minutes)
+        cache_age_minutes = self._get_cache_age_minutes(rel.target_file)
+        cache_age_seconds = cache_age_minutes * 60 if cache_age_minutes is not None else None
+
+        # Determine if this was a cache hit (has timestamp = was cached)
+        cache_hit = cache_age_minutes is not None
+
+        # Get relationship type as string (handle both enum and string)
+        rel_type = rel.relationship_type
+        rel_type_str = rel_type.value if hasattr(rel_type, "value") else str(rel_type)
+
+        # Create the injection event
+        event = InjectionEvent.create(
+            source_file=rel.target_file,
+            target_file=target_file,
+            relationship_type=rel_type_str,
+            snippet=snippet,
+            snippet_location=snippet_location,
+            cache_age_seconds=cache_age_seconds,
+            cache_hit=cache_hit,
+            token_count=token_count,
+            context_token_total=context_token_total,
+        )
+
+        # Log the event (immediately flushed per TDD 3.8.5)
+        self._injection_logger.log_injection(event)
+
     def _assemble_context(
         self, target_file: str, dependencies: List[Relationship]
     ) -> Tuple[str, List[str]]:
@@ -906,6 +971,9 @@ class CrossFileContextService:
         # Large function threshold (EC-12)
         large_function_threshold = 200
 
+        # Track cumulative token count for injection logging (TDD Section 3.8.5)
+        context_token_total = 0
+
         for rel in prioritized:
             if snippets_added >= max_snippets:
                 break
@@ -913,23 +981,55 @@ class CrossFileContextService:
             # Skip deleted files in snippet generation (EC-14)
             if rel.target_file in deleted_files:
                 # Add a note about the deleted file
+                snippet_text = f"# ⚠️ File was deleted\n# Last known location: {rel.target_file}"
                 context_parts.append(f"From {Path(rel.target_file).name}:{rel.line_number}")
                 context_parts.append("    # ⚠️ File was deleted")
                 context_parts.append(f"    # Last known location: {rel.target_file}")
                 context_parts.append("")
+
+                # Log the injection event (FR-26)
+                snippet_token_count = self._count_tokens(snippet_text)
+                context_token_total += snippet_token_count
+                self._log_injection_event(
+                    rel=rel,
+                    target_file=target_file,
+                    snippet=snippet_text,
+                    snippet_location=f"{Path(rel.target_file).name}:{rel.line_number}",
+                    token_count=snippet_token_count,
+                    context_token_total=context_token_total,
+                )
+
                 snippets_added += 1
                 continue
 
             # Check for wildcard imports (EC-4)
             if rel.relationship_type == RelationshipType.WILDCARD_IMPORT:
-                context_parts.append(f"From {Path(rel.target_file).name}:{rel.line_number}")
+                target_name = Path(rel.target_file).name
+                snippet_text = (
+                    f"from {Path(rel.target_file).stem} import *\n"
+                    f"# Note: Wildcard import - specific function tracking unavailable\n"
+                    f"# See {target_name} for available functions"
+                )
+                context_parts.append(f"From {target_name}:{rel.line_number}")
                 context_parts.append(f"from {Path(rel.target_file).stem} import *")
                 context_parts.append(
                     "    # Note: Wildcard import - specific function tracking unavailable"
                 )
-                target_name = Path(rel.target_file).name
                 context_parts.append(f"    # See {target_name} for available functions")
                 context_parts.append("")
+
+                # Log the injection event (FR-26)
+                snippet_token_count = self._count_tokens(snippet_text)
+                context_token_total += snippet_token_count
+                self._log_injection_event(
+                    rel=rel,
+                    target_file=target_file,
+                    snippet=snippet_text,
+                    snippet_location=f"{target_name}:{rel.line_number}",
+                    token_count=snippet_token_count,
+                    context_token_total=context_token_total,
+                )
+
                 snippets_added += 1
 
                 if self.config.warn_on_wildcards:
@@ -948,13 +1048,26 @@ class CrossFileContextService:
                 context_parts.append(f"From {target_name}:{rel.target_line or '?'}")
                 context_parts.append(signature)
 
+                # Build snippet text for logging
+                snippet_parts = [signature]
+                if docstring:
+                    snippet_parts.append(f'"""{docstring}"""')
+
                 # Add docstring if present and short (TDD 3.8.3: <50 chars)
                 if docstring:
                     context_parts.append(f'    """{docstring}"""')
 
-                # Check for large function (EC-12)
+                # Calculate snippet location for logging
                 if impl_range:
                     start_line, end_line = impl_range
+                    snippet_location = f"{target_name}:{start_line}-{end_line}"
+                else:
+                    start_line = rel.target_line or 0
+                    end_line = start_line
+                    snippet_location = f"{target_name}:{rel.target_line or '?'}"
+
+                # Check for large function (EC-12)
+                if impl_range:
                     line_count = end_line - start_line + 1
 
                     if line_count >= large_function_threshold:
@@ -977,6 +1090,20 @@ class CrossFileContextService:
                     )
 
                 context_parts.append("")
+
+                # Log the injection event (FR-26)
+                snippet_text = "\n".join(snippet_parts)
+                snippet_token_count = self._count_tokens(snippet_text)
+                context_token_total += snippet_token_count
+                self._log_injection_event(
+                    rel=rel,
+                    target_file=target_file,
+                    snippet=snippet_text,
+                    snippet_location=snippet_location,
+                    token_count=snippet_token_count,
+                    context_token_total=context_token_total,
+                )
+
                 snippets_added += 1
 
                 # Check for high-usage function warning (FR-19, FR-20)
@@ -1149,10 +1276,53 @@ class CrossFileContextService:
         """Clear all collected warnings."""
         self._warning_emitter.clear()
 
+    def get_injection_statistics(self) -> InjectionStatistics:
+        """Get injection statistics for session metrics.
+
+        Returns aggregated data about context injections per TDD Section 3.8.5:
+        - Total injection count
+        - Count by relationship type
+        - Top source files by injection count
+        - Cache hit/miss statistics
+
+        Returns:
+            InjectionStatistics with aggregated data.
+        """
+        return self._injection_logger.get_statistics()
+
+    def get_recent_injections(
+        self, target_file: Optional[str] = None, limit: int = 10
+    ) -> List[InjectionEvent]:
+        """Get recent context injection events per FR-29.
+
+        Provides programmatic access to recent injection events for debugging
+        and understanding what context was provided to Claude.
+
+        Args:
+            target_file: If provided, only return events for this target file.
+                        If None, returns all recent events.
+            limit: Maximum number of events to return. Default is 10.
+
+        Returns:
+            List of InjectionEvent objects, most recent first.
+        """
+        if target_file:
+            self._validate_filepath(target_file)
+        log_path = self._injection_logger.get_log_path()
+        return get_recent_injections(log_path, target_file, limit)
+
+    def get_injection_log_path(self) -> Path:
+        """Get the path to the injection log file.
+
+        Returns:
+            Path to the injections.jsonl file.
+        """
+        return self._injection_logger.get_log_path()
+
     def shutdown(self) -> None:
         """Shutdown the service and cleanup resources.
 
-        Stops file watcher, clears cache, and releases resources.
+        Stops file watcher, clears cache, closes loggers, and releases resources.
         """
         logger.info("CrossFileContextService shutting down...")
 
@@ -1164,5 +1334,8 @@ class CrossFileContextService:
 
         # Clear graph
         self._graph.clear()
+
+        # Close injection logger (ensures final flush)
+        self._injection_logger.close()
 
         logger.info("CrossFileContextService shutdown complete")
