@@ -62,6 +62,7 @@ Initial Review workflow first so that the `initial` label is removed.
 
 All development MUST be in a separate feature branch that is later merged into the default/main branch through
 the Github pull-request (PR) process. The feature branch name must be prefixed with `issue-N-` where `N` is the issue number.
+All new feature branches must be created from latest default/main branch. 
 
 After Claude Code completes its initial implementation of a Github issue, the work must be pushed to Github and
 a PR created. The PR must include Github keywords that will close the issue once the PR is merged. 
