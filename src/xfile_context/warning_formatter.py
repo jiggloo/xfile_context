@@ -268,7 +268,9 @@ class WarningFormatter:
             return f"{call_type}(...)"
 
         elif pattern_type == DynamicPatternType.DECORATOR:
-            decorator_name = metadata.get("decorator_name", "@decorator")
+            decorator_name = metadata.get("decorator_name", "decorator")
+            # Strip @ if already present to avoid double-@
+            decorator_name = decorator_name.lstrip("@")
             return f"@{decorator_name}"
 
         elif pattern_type == DynamicPatternType.METACLASS:
