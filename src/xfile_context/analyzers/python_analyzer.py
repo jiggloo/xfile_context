@@ -14,11 +14,10 @@ See TDD Section 3.5.1 for detailed specifications.
 """
 
 import ast
+import concurrent.futures
 import logging
-import signal
 import time
 from pathlib import Path
-from types import FrameType
 from typing import List, Optional
 
 from ..detectors.registry import DetectorRegistry
@@ -27,7 +26,7 @@ from ..models import FileMetadata, Relationship, RelationshipGraph
 logger = logging.getLogger(__name__)
 
 
-class TimeoutError(Exception):
+class ASTParsingTimeoutError(Exception):
     """Raised when AST parsing exceeds timeout limit."""
 
     pass
@@ -113,7 +112,7 @@ class PythonAnalyzer:
                 # Parsing failed (syntax error, timeout, etc.)
                 self._mark_unparseable(filepath)
                 return False
-        except TimeoutError:
+        except ASTParsingTimeoutError:
             logger.warning(
                 f"⚠️ Skipping {filepath}: AST parsing exceeded timeout " f"({self.timeout_seconds}s)"
             )
@@ -188,6 +187,9 @@ class PythonAnalyzer:
 
         Implements AST parsing stage from TDD Section 3.5.1.
 
+        Uses concurrent.futures for cross-platform timeout support (works on
+        both Unix and Windows).
+
         Args:
             filepath: Path to file being parsed (for error reporting).
             source: Source code to parse.
@@ -196,37 +198,34 @@ class PythonAnalyzer:
             AST Module node, or None if parsing failed.
 
         Raises:
-            TimeoutError: If parsing exceeds timeout limit.
+            ASTParsingTimeoutError: If parsing exceeds timeout limit.
 
         Error Recovery (EC-18):
         - Syntax errors: Log warning with line number, return None
-        - Timeout: Raise TimeoutError (caller handles)
+        - Timeout: Raise ASTParsingTimeoutError (caller handles)
         """
 
-        def timeout_handler(signum: int, frame: Optional[FrameType]) -> None:
-            raise TimeoutError("AST parsing timeout")
+        def _do_parse() -> Optional[ast.Module]:
+            """Internal function to perform the actual parsing."""
+            try:
+                return ast.parse(source, filename=filepath, mode="exec")
+            except SyntaxError as e:
+                logger.warning(f"⚠️ Skipping {filepath}: Syntax error at line {e.lineno}: {e.msg}")
+                return None
 
         try:
-            # Set timeout alarm (Unix only)
-            # Note: This is a simplified implementation. Production code
-            # should handle Windows compatibility or use threading.
-            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(self.timeout_seconds)
-
-            try:
-                # Parse with Python's ast module
-                module_ast = ast.parse(source, filename=filepath, mode="exec")
-                return module_ast
-            finally:
-                # Cancel alarm
-                signal.alarm(0)
-                signal.signal(signal.SIGALRM, old_handler)
-
-        except SyntaxError as e:
-            # Syntax error in Python file
-            logger.warning(f"⚠️ Skipping {filepath}: Syntax error at line {e.lineno}: {e.msg}")
-            return None
-        except TimeoutError:
+            # Use ThreadPoolExecutor with timeout for cross-platform support
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_do_parse)
+                try:
+                    result = future.result(timeout=self.timeout_seconds)
+                    return result
+                except concurrent.futures.TimeoutError as e:
+                    # Parsing exceeded timeout limit
+                    raise ASTParsingTimeoutError(
+                        f"AST parsing timeout ({self.timeout_seconds}s)"
+                    ) from e
+        except ASTParsingTimeoutError:
             # Re-raise timeout for caller to handle
             raise
         except Exception as e:
