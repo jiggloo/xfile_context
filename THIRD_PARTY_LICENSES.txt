@@ -180,6 +180,13 @@ Author: UNKNOWN
 URL: https://github.com/pypa/virtualenv
 --------------------------------------------------------------------------------
 
+Package: watchdog
+Version: 4.0.2
+License: Apache Software License
+Author: Yesudeep Mangalapilly
+URL: https://github.com/gorakhargosh/watchdog
+--------------------------------------------------------------------------------
+
 Package: xfile-context
 Version: 0.0.5
 License: Proprietary
