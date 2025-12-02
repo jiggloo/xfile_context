@@ -490,6 +490,9 @@ class CrossFileContextService:
         threshold = self.config.function_usage_warning_threshold
         high_usage: Dict[Tuple[str, str], int] = {}
 
+        # Cache all relationships once to avoid O(N×M) complexity
+        all_relationships = self._graph.get_all_relationships()
+
         # Check each unique symbol in dependencies
         seen_symbols: Set[Tuple[str, Optional[str]]] = set()
         for rel in dependencies:
@@ -499,7 +502,13 @@ class CrossFileContextService:
             seen_symbols.add(symbol_key)
 
             if rel.target_symbol:
-                usage_count = self._get_symbol_usage_count(rel.target_file, rel.target_symbol)
+                # Count directly using cached relationships
+                using_files = {
+                    r.source_file
+                    for r in all_relationships
+                    if r.target_file == rel.target_file and r.target_symbol == rel.target_symbol
+                }
+                usage_count = len(using_files)
                 if usage_count >= threshold:
                     high_usage[(rel.target_file, rel.target_symbol)] = usage_count
 
@@ -508,17 +517,22 @@ class CrossFileContextService:
     def _prioritize_dependencies(self, dependencies: List[Relationship]) -> List[Relationship]:
         """Prioritize dependencies for context injection.
 
+        Returns a new sorted list without modifying the input.
+
         Priority order (per TDD Section 3.8.2):
-        1. Direct dependencies over transitive
-        2. Recently edited files (last 10 min)
-        3. High usage frequency (3+ files - FR-19/FR-20)
-        4. Relationship type: IMPORT > FUNCTION_CALL > INHERITANCE
+        1. Recently edited files (last 10 min)
+        2. High usage frequency (3+ files - FR-19/FR-20)
+        3. Relationship type: IMPORT > FUNCTION_CALL > INHERITANCE
+        4. Line number (earlier lines first)
+
+        Note: "Direct dependencies over transitive" from TDD 3.8.2 is not
+        implemented in v0.1.0 as the graph doesn't track transitivity.
 
         Args:
             dependencies: List of relationships to prioritize.
 
         Returns:
-            Prioritized list of relationships.
+            New list of relationships sorted by priority (highest first).
         """
         type_priority = {
             RelationshipType.IMPORT: 0,
@@ -531,7 +545,7 @@ class CrossFileContextService:
         # Pre-compute high-usage symbols for efficiency
         high_usage_symbols = self._get_high_usage_symbols(dependencies)
 
-        def sort_key(rel: Relationship) -> Tuple[int, int, int, int, int]:
+        def sort_key(rel: Relationship) -> Tuple[int, int, int, int]:
             # Lower values = higher priority
 
             # 1. Check if target file was recently modified (last 10 min)
@@ -549,7 +563,7 @@ class CrossFileContextService:
             # 3. Relationship type priority
             rel_type_priority = type_priority.get(rel.relationship_type, 99)
 
-            return (recently_edited, high_usage, rel_type_priority, rel.line_number, 0)
+            return (recently_edited, high_usage, rel_type_priority, rel.line_number)
 
         return sorted(dependencies, key=sort_key)
 
