@@ -54,8 +54,10 @@ class ClassInheritanceDetector(RelationshipDetector):
     """
 
     # Python built-in exception and base classes
+    # Computed at module import time for performance
+    # Includes all types from builtins: Exception, ValueError, dict, list, etc.
     BUILTIN_CLASSES = frozenset(
-        [name for name in dir(builtins) if isinstance(getattr(builtins, name, None), type)]
+        name for name in dir(builtins) if isinstance(getattr(builtins, name), type)
     )
 
     def __init__(self) -> None:
@@ -167,14 +169,18 @@ class ClassInheritanceDetector(RelationshipDetector):
         """Build cache of locally-defined classes in the current file.
 
         This cache is used to implement the local scope check in the
-        resolution order.
+        resolution order. Only top-level (module-scope) classes are cached
+        since nested classes require qualification (e.g., Outer.Inner).
 
         Args:
             module_ast: The root AST node of the module.
         """
         self._local_classes.clear()
 
-        for node in ast.walk(module_ast):
+        # Only collect top-level classes (not nested classes)
+        # Nested classes like Outer.Inner are not directly accessible
+        # and should be resolved as unresolved or via qualified names
+        for node in module_ast.body:
             if isinstance(node, ast.ClassDef):
                 self._local_classes.add(node.name)
 

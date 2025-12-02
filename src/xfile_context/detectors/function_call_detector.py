@@ -173,14 +173,18 @@ class FunctionCallDetector(RelationshipDetector):
         """Build cache of locally-defined functions in the current file.
 
         This cache is used to implement the local scope check in the
-        resolution order (TDD Section 3.5.2.2).
+        resolution order (TDD Section 3.5.2.2). Only top-level (module-scope)
+        functions are cached since nested functions are not accessible from
+        outside their enclosing scope.
 
         Args:
             module_ast: The root AST node of the module.
         """
         self._local_functions.clear()
 
-        for node in ast.walk(module_ast):
+        # Only collect top-level functions (not nested functions)
+        # Nested functions are not accessible at module level
+        for node in module_ast.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self._local_functions.add(node.name)
 
