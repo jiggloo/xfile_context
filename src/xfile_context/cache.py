@@ -36,6 +36,9 @@ from xfile_context.models import CacheEntry, CacheStatistics
 
 logger = logging.getLogger(__name__)
 
+# Security constants
+_MAX_FILEPATH_LENGTH = 4096
+
 
 class WorkingMemoryCache:
     """LRU cache with staleness detection for file snippets.
@@ -101,6 +104,29 @@ class WorkingMemoryCache:
             f"max_retries={max_retries}"
         )
 
+    def _validate_filepath(self, filepath: str) -> None:
+        """Validate filepath for security concerns.
+
+        Args:
+            filepath: Path to validate.
+
+        Raises:
+            ValueError: If filepath contains path traversal patterns or control characters.
+        """
+        # Check for control characters first (null bytes, etc.) as they may hide other attacks
+        if any(ord(c) < 32 and c not in ("\t", "\n", "\r") for c in filepath):
+            raise ValueError(f"Control characters detected in filepath: {repr(filepath)}")
+
+        # Check for path traversal patterns
+        if "/.." in filepath or filepath.startswith("..") or "\\.." in filepath:
+            raise ValueError(f"Path traversal detected in filepath: {filepath}")
+
+        # Check maximum length
+        if len(filepath) > _MAX_FILEPATH_LENGTH:
+            raise ValueError(
+                f"Filepath too long: {len(filepath)} characters > {_MAX_FILEPATH_LENGTH}"
+            )
+
     def get(self, filepath: str, line_range: Optional[Tuple[int, int]] = None) -> str:
         """Get cached content, automatically refreshing if stale.
 
@@ -116,10 +142,14 @@ class WorkingMemoryCache:
             File content (full file or snippet).
 
         Raises:
+            ValueError: If filepath contains path traversal patterns or control characters.
             FileNotFoundError: If file doesn't exist.
             IOError: If file read fails after max_retries.
             PermissionError: If file is not readable.
         """
+        # Security: Validate filepath before use
+        self._validate_filepath(filepath)
+
         with self._cache_lock:
             cache_key = (filepath, line_range)
 
@@ -332,7 +362,13 @@ class WorkingMemoryCache:
 
         Args:
             filepath: Absolute path to file to invalidate.
+
+        Raises:
+            ValueError: If filepath contains path traversal patterns or control characters.
         """
+        # Security: Validate filepath before use
+        self._validate_filepath(filepath)
+
         with self._cache_lock:
             # Find and remove all entries for this file
             keys_to_remove = [key for key in self._cache if key[0] == filepath]

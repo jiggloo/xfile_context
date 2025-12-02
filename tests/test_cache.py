@@ -596,3 +596,67 @@ class TestEdgeCases:
         # Test: Single line
         result = cache.get(str(test_file), line_range=(2, 2))
         assert result == "line2\n"
+
+
+class TestSecurityValidation:
+    """Test security validation of file paths."""
+
+    def test_path_traversal_rejected(self, tmp_path: Path) -> None:
+        """Test that path traversal patterns are rejected."""
+        file_event_timestamps: Dict[str, float] = {}
+        cache = WorkingMemoryCache(file_event_timestamps)
+
+        # Test various path traversal patterns
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            cache.get("/../etc/passwd")
+
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            cache.get("/some/path/../../../etc/passwd")
+
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            cache.get("..\\windows\\system32\\config")
+
+    def test_control_characters_rejected(self, tmp_path: Path) -> None:
+        """Test that control characters in paths are rejected."""
+        file_event_timestamps: Dict[str, float] = {}
+        cache = WorkingMemoryCache(file_event_timestamps)
+
+        # Test null byte injection
+        with pytest.raises(ValueError, match="Control characters detected"):
+            cache.get("/path/file.py\x00../../etc/passwd")
+
+        # Test other control characters
+        with pytest.raises(ValueError, match="Control characters detected"):
+            cache.get("/path/file\x01.py")
+
+    def test_path_length_limit_enforced(self, tmp_path: Path) -> None:
+        """Test that excessively long paths are rejected."""
+        file_event_timestamps: Dict[str, float] = {}
+        cache = WorkingMemoryCache(file_event_timestamps)
+
+        # Create path longer than 4096 characters
+        long_path = "/tmp/" + "a" * 5000 + ".py"
+
+        with pytest.raises(ValueError, match="Filepath too long"):
+            cache.get(long_path)
+
+    def test_invalidate_validates_path(self, tmp_path: Path) -> None:
+        """Test that invalidate also validates paths."""
+        file_event_timestamps: Dict[str, float] = {}
+        cache = WorkingMemoryCache(file_event_timestamps)
+
+        # Path traversal should be rejected in invalidate too
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            cache.invalidate("/../etc/passwd")
+
+    def test_valid_paths_accepted(self, tmp_path: Path) -> None:
+        """Test that valid paths are accepted."""
+        # Setup
+        test_file = tmp_path / "test.py"
+        test_file.write_text("content")
+        file_event_timestamps: Dict[str, float] = {}
+        cache = WorkingMemoryCache(file_event_timestamps)
+
+        # Valid absolute path should work
+        content = cache.get(str(test_file))
+        assert content == "content"
