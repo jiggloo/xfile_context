@@ -72,7 +72,7 @@
 ### 1.1 Technical Constraints
 
 **Python Version:**
-- Target runtime: Python 3.8+ (standard for modern development environments)
+- Target runtime: Python 3.10+ (required for MCP SDK compatibility)
 - Rationale: Balance between modern features and broad compatibility
 
 **MCP Protocol Integration:**
@@ -4442,7 +4442,7 @@ This section describes error handling strategies that ensure robust operation an
 **Causes**:
 - Invalid Python syntax (e.g., incomplete code, typos during editing)
 - Encoding errors (non-UTF-8 files)
-- Python version incompatibility (e.g., using Python 3.11 syntax with Python 3.8 parser)
+- Python version incompatibility (e.g., using Python 3.13 syntax with Python 3.10 parser)
 
 **Handling**:
 1. **Catch exception**: `ast.parse()` raises `SyntaxError`
@@ -5000,7 +5000,7 @@ This section describes the testing philosophy and approach specific to the imple
 **CI Pipeline Tests** (see Section 3.15.3 for detailed requirements):
 - **Execution**: GitHub PR check (required for merge)
 - **Multi-environment matrix**:
-  - Python versions: 3.8, 3.9, 3.10, 3.11, 3.12
+  - Python versions: 3.10, 3.11, 3.12, 3.13
   - Operating system: Ubuntu only
 - **Test scope**: Full unit test suite + integration tests
 - **Functional test subset**: Representative cases from T-1 through T-10
@@ -5639,7 +5639,7 @@ This section outlines the phased implementation roadmap. Each task includes refe
 - **Success Criteria**:
   - Pre-commit hook runs locally and prevents commits on failures
   - GitHub PR checks run automatically and display results in UI
-  - Multi-environment test matrix (Python 3.8-3.12, Ubuntu) passes
+  - Multi-environment test matrix (Python 3.10-3.13, Ubuntu) passes
   - Main branch cannot accept direct commits
   - All checks are required for PR merge
 - **Testing**: Create test PR with intentional formatting/linting/test errors to verify detection
@@ -5818,7 +5818,7 @@ This section specifies the project-specific implementation of developer experien
   - Configuration: `.ruff.toml` with project-specific rules
 - **Tool**: `mypy` (Static type checker)
   - Configuration: Strict mode for `src/`, lenient for `tests/`
-  - Target: Python 3.8+ compatibility (see Section 1.1)
+  - Target: Python 3.10+ compatibility (see Section 1.1)
 
 **Unit Tests** (Fast subset):
 - **Tool**: `pytest` with `-m "not slow"` marker
@@ -5843,7 +5843,7 @@ This section specifies the project-specific implementation of developer experien
 
 **Multi-Environment Unit Tests**:
 - **Python versions**: 3.8, 3.9, 3.10, 3.11, 3.12
-  - Rationale: Cover Python 3.8+ constraint (Section 1.1) and latest stable releases
+  - Rationale: Cover Python 3.10+ constraint (Section 1.1) and latest stable releases
   - Matrix strategy: Test all versions in parallel on GitHub Actions
 - **Operating system**: Ubuntu only
   - Rationale: Primary target platform for most Claude Code users
@@ -5854,7 +5854,7 @@ This section specifies the project-specific implementation of developer experien
 **Implementation**:
 - **GitHub Action**: `.github/workflows/comprehensive-tests.yml`
   - Runs on: `pull_request`
-  - Matrix: `{python: [3.8, 3.9, 3.10, 3.11, 3.12], os: [ubuntu-latest]}`
+  - Matrix: `{python: [3.10, 3.11, 3.12, 3.13], os: [ubuntu-latest]}`
   - Displays: Test results per environment in PR checks UI
   - Status: Required check for PR merge
 
@@ -6311,7 +6311,7 @@ This section tracks remaining uncertainties and action items that need resolutio
 **TODO-1: Development Environment Setup**
 - **Action**: Set up development environment with all required tools
 - **Details**:
-  - Python 3.8+ (minimum version per NFR-13)
+  - Python 3.10+ (minimum version per NFR-13)
   - Install AST parsing dependencies (`ast` module is built-in)
   - Install file watcher library (pending Q-1 resolution)
   - Install MCP SDK/libraries (pending Q-3 resolution)
@@ -6698,6 +6698,27 @@ These gaps were identified during TDD creation itself, before implementation beg
   - All tests pass: rapid modifications, bulk operations, timestamp overhead, concurrent modifications
   - Performance verified: timestamp updates average 0.5µs, well within <200ms target per file
   - Section 3.14.3 Task 3.2 description should be updated in future to match Section 3.6.2 simplified design
+- **Status**: Resolved
+- **Resolution Date**: 2025-12-02
+
+**G-4: Python Version Requirement Update for MCP SDK Compatibility**
+- **Discovery Date**: 2025-12-02
+- **Discovered During**: Phase 4, Task 4.2 (MCP Server Protocol Layer), Github Issue #25
+- **Description**: The TDD Section 1.1 and TODO-1 specify Python 3.10+ compatibility (NFR-13). However, the official MCP Python SDK (`mcp` package on PyPI) requires Python 3.10+ as of version 1.0.0+. Additionally, Claude Code itself requires Python 3.10+ according to the official documentation. This creates an incompatibility between the TDD requirement and the actual runtime environment.
+- **Root Cause**: Q-3 (MCP Protocol Version and Compatibility) was marked as "Action Required: Verify Claude Code's MCP version before starting Task 1.2" but this verification was not completed before the TDD was finalized. The Python 3.10+ requirement was specified without verifying the actual MCP SDK requirements or Claude Code's Python version requirements.
+- **Impact**:
+  - Cannot use official MCP Python SDK with Python 3.10 (package installation fails)
+  - TDD Section 1.1 constraint is incompatible with deployment environment
+  - TODO-1 (Development Environment Setup) references incorrect Python version
+  - NFR-13 references are affected throughout TDD
+- **Affected Components**: Section 1.1 (Constraints), TODO-1, NFR-13, Q-3, Task 4.2, all references to Python 3.8 and 3.9
+- **Resolution**:
+  - Updated `pyproject.toml` to require Python 3.10+ (`requires-python = ">=3.10"`)
+  - Updated Python version classifiers to 3.10, 3.11, 3.12, 3.13 (removed 3.8, 3.9)
+  - Added MCP SDK dependency: `mcp>=1.0.0,<2.0.0`
+  - Verified Claude Code requires Python 3.10+ through official documentation
+  - Python 3.10+ aligns with: (1) MCP SDK requirements, (2) Claude Code requirements, (3) real-world deployment context
+  - TDD Section 1.1 has been updated to reflect Python 3.10+ requirement (was Python 3.8+)
 - **Status**: Resolved
 - **Resolution Date**: 2025-12-02
 

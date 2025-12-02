@@ -154,7 +154,8 @@ class ConditionalImportDetector(RelationshipDetector):
     def _unparse_expr(self, node: ast.AST) -> str:
         """Convert an AST node back to source code string.
 
-        Provides compatibility with Python 3.8 which doesn't have ast.unparse().
+        Note: ast.unparse() is available in Python 3.9+, and this project requires 3.10+.
+        The fallback code is kept for robustness.
 
         Args:
             node: AST node to convert.
@@ -162,12 +163,12 @@ class ConditionalImportDetector(RelationshipDetector):
         Returns:
             String representation of the node.
         """
-        # Python 3.9+ has ast.unparse
+        # Python 3.9+ has ast.unparse (available since we require 3.10+)
         if hasattr(ast, "unparse"):
             unparse_result: str = ast.unparse(node)
             return unparse_result
 
-        # Python 3.8 fallback: use a simple heuristic for common patterns
+        # Fallback: use a simple heuristic for common patterns
         # For version checks, we can build a reasonable string representation
         if isinstance(node, ast.Compare):
             # Build a simple comparison string
@@ -229,7 +230,7 @@ class ConditionalImportDetector(RelationshipDetector):
             return f"({', '.join(elements)})"
         elif isinstance(node, ast.Constant):
             return repr(node.value)
-        elif isinstance(node, ast.Num):  # Python 3.8 compatibility
+        elif isinstance(node, ast.Num):  # Backward compatibility (deprecated in 3.8+)
             return repr(node.n)
         else:
             return "<expr>"

@@ -41,11 +41,10 @@ gh api \
       "Linting",
       "Type Checking",
       "Fast Unit Tests",
-      "Test (Python 3.8)",
-      "Test (Python 3.9)",
       "Test (Python 3.10)",
       "Test (Python 3.11)",
-      "Test (Python 3.12)"
+      "Test (Python 3.12)",
+      "Test (Python 3.13)"
     ]
   },
   "enforce_admins": true,
@@ -66,6 +65,6 @@ echo ""
 echo "Protection summary:"
 echo "  - Pull requests required (no direct commits)"
 echo "  - Approvals: 0 required (suitable for solo development)"
-echo "  - Required status checks: 9 checks (formatting, linting, type checking, tests)"
+echo "  - Required status checks: 8 checks (formatting, linting, type checking, tests)"
 echo "  - Branches must be up-to-date before merging"
 echo "  - Rules enforced for administrators"
