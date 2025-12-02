@@ -232,6 +232,183 @@ class TestUpdateOnDelete:
         assert success is True
         assert elapsed < 0.2, f"Deletion took {elapsed*1000:.1f}ms (target: <200ms)"
 
+    def test_deletion_metadata_fields(self, updater, graph, temp_project_dir):
+        """Test that deletion properly sets deleted and deletion_time fields (EC-14)."""
+        test_file = str(temp_project_dir / "test.py")
+
+        # Add a relationship
+        rel = Relationship(
+            source_file=test_file,
+            target_file="/other.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        graph.add_relationship(rel)
+
+        # Record time before deletion
+        time_before = time.time()
+
+        # Delete file
+        success = updater.update_on_delete(test_file)
+        assert success is True
+
+        # Record time after deletion
+        time_after = time.time()
+
+        # Verify deletion metadata
+        metadata = graph.get_file_metadata(test_file)
+        assert metadata is not None
+        assert metadata.deleted is True, "deleted field should be True"
+        assert metadata.deletion_time is not None, "deletion_time should be set"
+        assert (
+            time_before <= metadata.deletion_time <= time_after
+        ), "deletion_time should be within deletion window"
+
+    def test_broken_reference_warnings(self, updater, graph, temp_project_dir, caplog):
+        """Test that deletion emits warnings for broken references (TDD Section 3.6.4)."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        deleted_file = str(temp_project_dir / "deleted.py")
+        dependent_file1 = str(temp_project_dir / "dependent1.py")
+        dependent_file2 = str(temp_project_dir / "dependent2.py")
+
+        # Add relationships: dependent files import from deleted file
+        rel1 = Relationship(
+            source_file=dependent_file1,
+            target_file=deleted_file,
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+            target_symbol="some_function",
+        )
+        rel2 = Relationship(
+            source_file=dependent_file1,
+            target_file=deleted_file,
+            relationship_type=RelationshipType.FUNCTION_CALL,
+            line_number=10,
+            target_symbol="another_function",
+        )
+        rel3 = Relationship(
+            source_file=dependent_file2,
+            target_file=deleted_file,
+            relationship_type=RelationshipType.IMPORT,
+            line_number=3,
+            target_symbol="MyClass",
+        )
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+        graph.add_relationship(rel3)
+
+        # Delete file
+        success = updater.update_on_delete(deleted_file)
+        assert success is True
+
+        # Verify warnings were emitted
+        warning_records = [rec for rec in caplog.records if rec.levelname == "WARNING"]
+        assert len(warning_records) >= 2, "Should emit warnings for dependent files"
+
+        # Check warning content
+        warning_messages = [rec.message for rec in warning_records]
+        dependent1_warned = any(dependent_file1 in msg for msg in warning_messages)
+        dependent2_warned = any(dependent_file2 in msg for msg in warning_messages)
+
+        assert dependent1_warned, f"Should warn about {dependent_file1}"
+        assert dependent2_warned, f"Should warn about {dependent_file2}"
+
+        # Check that warning mentions the deleted file
+        assert any(
+            deleted_file in msg for msg in warning_messages
+        ), "Warning should mention deleted file"
+
+    def test_deletion_with_no_dependents(self, updater, graph, temp_project_dir, caplog):
+        """Test deletion of file with no dependents (no broken reference warnings)."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        test_file = str(temp_project_dir / "isolated.py")
+
+        # Add relationship where test_file depends on others (not the reverse)
+        rel = Relationship(
+            source_file=test_file,
+            target_file="/other.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        graph.add_relationship(rel)
+
+        # Delete file
+        success = updater.update_on_delete(test_file)
+        assert success is True
+
+        # Verify no "Imported file deleted" warnings (only performance warnings allowed)
+        warning_messages = [rec.message for rec in caplog.records if rec.levelname == "WARNING"]
+        broken_ref_warnings = [msg for msg in warning_messages if "Imported file deleted" in msg]
+        assert len(broken_ref_warnings) == 0, "Should not emit broken reference warnings"
+
+    def test_integration_file_deletion_workflow(self, updater, graph, temp_project_dir, caplog):
+        """Integration test for complete file deletion workflow (TDD Section 3.6.4)."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        # Create a scenario:
+        # - module.py defines functions
+        # - client1.py imports from module.py
+        # - client2.py imports from module.py
+        # - module.py gets deleted
+        module_file = str(temp_project_dir / "module.py")
+        client1_file = str(temp_project_dir / "client1.py")
+        client2_file = str(temp_project_dir / "client2.py")
+
+        # Setup relationships
+        rel1 = Relationship(
+            source_file=client1_file,
+            target_file=module_file,
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+            target_symbol="helper_function",
+        )
+        rel2 = Relationship(
+            source_file=client2_file,
+            target_file=module_file,
+            relationship_type=RelationshipType.IMPORT,
+            line_number=2,
+            target_symbol="MyClass",
+        )
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+
+        # Verify initial state
+        assert len(graph.get_dependents(module_file)) == 2
+        assert graph.get_file_metadata(module_file) is None
+
+        # Delete module
+        success = updater.update_on_delete(module_file)
+        assert success is True
+
+        # SUCCESS CRITERIA verification (from Issue #22):
+
+        # 1. Deleted file removed from graph
+        assert len(graph.get_dependencies(module_file)) == 0
+        assert len(graph.get_dependents(module_file)) == 0
+
+        # 2. Metadata includes deletion timestamp
+        metadata = graph.get_file_metadata(module_file)
+        assert metadata is not None
+        assert metadata.deleted is True
+        assert metadata.deletion_time is not None
+
+        # 3. Broken references detected and warnings emitted for dependent files
+        warning_messages = [rec.message for rec in caplog.records if rec.levelname == "WARNING"]
+        broken_ref_warnings = [msg for msg in warning_messages if "Imported file deleted" in msg]
+
+        assert len(broken_ref_warnings) >= 2, "Should warn about both client files"
+        assert any(client1_file in msg for msg in broken_ref_warnings)
+        assert any(client2_file in msg for msg in broken_ref_warnings)
+        assert any(module_file in msg for msg in broken_ref_warnings)
+
 
 class TestUpdateOnCreate:
     """Test file creation updates."""

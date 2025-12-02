@@ -21,11 +21,11 @@ See TDD Section 3.6.3 for detailed specifications.
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from .analyzers.python_analyzer import PythonAnalyzer
 from .file_watcher import FileWatcher
-from .models import FileMetadata, RelationshipGraph
+from .models import FileMetadata, Relationship, RelationshipGraph
 
 logger = logging.getLogger(__name__)
 
@@ -187,9 +187,11 @@ class GraphUpdater:
         """Update graph when file is deleted.
 
         Implements deletion update from TDD Section 3.6.4:
-        1. Remove all relationships involving deleted file
-        2. Update bidirectional indexes
-        3. Mark file as deleted in metadata (EC-14)
+        1. Identify files that depended on deleted file (broken references)
+        2. Emit warnings for dependent files
+        3. Remove all relationships involving deleted file
+        4. Update bidirectional indexes
+        5. Mark file as deleted in metadata (EC-14)
 
         Args:
             filepath: Absolute path to deleted file.
@@ -210,21 +212,27 @@ class GraphUpdater:
         try:
             logger.debug(f"Updating graph for deleted file: {filepath}")
 
-            # Stage 1: Remove all relationships
+            # Stage 1: Broken reference detection (TDD Section 3.6.4)
+            # Get files that imported from the deleted file BEFORE removing relationships
+            dependents = self.graph.get_dependents(filepath)
+            if dependents:
+                self._emit_broken_reference_warnings(filepath, dependents)
+
+            # Stage 2: Remove all relationships
             self.graph.remove_relationships_for_file(filepath)
 
-            # Stage 2: Mark as deleted in metadata (EC-14)
+            # Stage 3: Mark as deleted in metadata (EC-14)
+            deletion_timestamp = time.time()
             metadata = FileMetadata(
                 filepath=filepath,
-                last_analyzed=time.time(),
+                last_analyzed=deletion_timestamp,
                 relationship_count=0,
                 has_dynamic_patterns=False,
                 dynamic_pattern_types=[],
                 is_unparseable=False,
+                deleted=True,
+                deletion_time=deletion_timestamp,
             )
-            # Add deletion marker in metadata dict
-            # Note: FileMetadata doesn't have deleted field in v0.1.0
-            # Store in graph metadata for now
             self.graph.set_file_metadata(filepath, metadata)
 
             elapsed = time.time() - start_time
@@ -244,6 +252,45 @@ class GraphUpdater:
         except Exception as e:
             logger.error(f"Graph update failed for deleted file {filepath}: {e}")
             return False
+
+    def _emit_broken_reference_warnings(
+        self, deleted_file: str, dependents: List[Relationship]
+    ) -> None:
+        """Emit warnings for files that have broken references to deleted file.
+
+        Implements broken reference detection from TDD Section 3.6.4.
+
+        Args:
+            deleted_file: Path to the deleted file.
+            dependents: List of relationships where other files depend on deleted_file.
+        """
+        # Group by source file for cleaner output
+        by_source: Dict[str, List[Relationship]] = {}
+        for rel in dependents:
+            if rel.source_file not in by_source:
+                by_source[rel.source_file] = []
+            by_source[rel.source_file].append(rel)
+
+        # Emit warning for each importing file
+        for source_file, rels in by_source.items():
+            # Build list of specific broken imports
+            broken_imports = []
+            for rel in rels:
+                if rel.target_symbol:
+                    import_info = (
+                        f"{rel.target_symbol} "
+                        f"(line {rel.line_number}, type: {rel.relationship_type})"
+                    )
+                    broken_imports.append(import_info)
+                else:
+                    broken_imports.append(f"line {rel.line_number} (type: {rel.relationship_type})")
+
+            # Format warning message per TDD Section 3.6.4
+            imports_str = ", ".join(broken_imports)
+            logger.warning(
+                f"⚠️ Imported file deleted: {source_file} imports from {deleted_file} "
+                f"which no longer exists. Broken references: {imports_str}"
+            )
 
     def update_on_create(self, filepath: str) -> bool:
         """Update graph when file is created.
