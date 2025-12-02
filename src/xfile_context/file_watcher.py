@@ -346,11 +346,18 @@ class FileWatcher:
 
         Thread Safety:
             Called from watcher thread. Callbacks should be thread-safe.
+            Creates a snapshot of callbacks to avoid race conditions if
+            callbacks are registered/unregistered during iteration.
 
         Args:
             file_path: Absolute path to modified/deleted file.
         """
-        for callback in self._invalidation_callbacks:
+        # Create snapshot to avoid list mutation during iteration
+        # This prevents RuntimeError if callbacks are registered/unregistered
+        # concurrently from another thread
+        callbacks = list(self._invalidation_callbacks)
+
+        for callback in callbacks:
             try:
                 callback(file_path)
             except Exception as e:
