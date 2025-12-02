@@ -457,7 +457,12 @@ class TestModuleResolution:
 
 
 class TestAliasedImports:
-    """Tests for aliased imports (import as, from...import as)."""
+    """Tests for aliased imports (import as, from...import as).
+
+    Tests enhanced alias tracking per TDD Section 3.5.2.4 (EC-3):
+    - Metadata includes both original_name and alias
+    - Supports function call matching with both names
+    """
 
     def test_import_as(self):
         """Test 'import module as alias' statement."""
@@ -493,6 +498,118 @@ class TestAliasedImports:
         assert rel.target_file == "<stdlib:os>"
         assert rel.metadata["import_style"] == "from_import_as"
         assert rel.target_symbol == "path as ospath"
+
+    def test_import_as_metadata_includes_original_and_alias(self):
+        """Test that 'import module as alias' metadata includes both original_name and alias.
+
+        Per TDD Section 3.5.2.4 (EC-3), aliased imports should track both names
+        to support function call matching with either name.
+        """
+        detector = ImportDetector()
+        code = "import collections as col"
+        tree = ast.parse(code)
+
+        relationships = []
+        for node in ast.walk(tree):
+            relationships.extend(detector.detect(node, "/test/file.py", tree))
+
+        assert len(relationships) == 1
+        rel = relationships[0]
+        assert rel.metadata["import_style"] == "import_as"
+        assert rel.metadata["original_name"] == "collections"
+        assert rel.metadata["alias"] == "col"
+        assert rel.target_symbol == "collections as col"
+
+    def test_from_import_as_metadata_includes_original_and_alias(self):
+        """Test that 'from module import name as alias' metadata includes both names.
+
+        Per TDD Section 3.5.2.4 (EC-3), aliased imports should track both names
+        to support function call matching with either name.
+        """
+        detector = ImportDetector()
+        code = "from typing import List as ListType"
+        tree = ast.parse(code)
+
+        relationships = []
+        for node in ast.walk(tree):
+            relationships.extend(detector.detect(node, "/test/file.py", tree))
+
+        assert len(relationships) == 1
+        rel = relationships[0]
+        assert rel.metadata["import_style"] == "from_import_as"
+        assert rel.metadata["original_name"] == "List"
+        assert rel.metadata["alias"] == "ListType"
+        assert rel.target_symbol == "List as ListType"
+
+    def test_multiple_aliased_imports_in_one_statement(self):
+        """Test multiple aliased imports in a single from...import statement."""
+        detector = ImportDetector()
+        code = "from typing import List as L, Dict as D, Optional as Opt"
+        tree = ast.parse(code)
+
+        relationships = []
+        for node in ast.walk(tree):
+            relationships.extend(detector.detect(node, "/test/file.py", tree))
+
+        assert len(relationships) == 3
+
+        # Check each import has correct metadata
+        aliases = {rel.metadata["alias"]: rel.metadata["original_name"] for rel in relationships}
+        assert aliases == {"L": "List", "D": "Dict", "Opt": "Optional"}
+
+        # All should be from typing
+        for rel in relationships:
+            assert rel.target_file == "<stdlib:typing>"
+            assert rel.metadata["import_style"] == "from_import_as"
+
+    def test_non_aliased_import_has_no_alias_metadata(self):
+        """Test that non-aliased imports don't have original_name/alias metadata."""
+        detector = ImportDetector()
+        code = "import os"
+        tree = ast.parse(code)
+
+        relationships = []
+        for node in ast.walk(tree):
+            relationships.extend(detector.detect(node, "/test/file.py", tree))
+
+        assert len(relationships) == 1
+        rel = relationships[0]
+        assert rel.metadata["import_style"] == "import"
+        assert "original_name" not in rel.metadata
+        assert "alias" not in rel.metadata
+
+    def test_mixed_aliased_and_non_aliased_imports(self):
+        """Test mixing aliased and non-aliased imports in one statement."""
+        detector = ImportDetector()
+        code = "from typing import List as L, Dict, Optional as Opt"
+        tree = ast.parse(code)
+
+        relationships = []
+        for node in ast.walk(tree):
+            relationships.extend(detector.detect(node, "/test/file.py", tree))
+
+        assert len(relationships) == 3
+
+        # Find each import by target_symbol
+        imports_by_symbol = {rel.target_symbol: rel for rel in relationships}
+
+        # List as L - should have alias metadata
+        list_rel = imports_by_symbol["List as L"]
+        assert list_rel.metadata["import_style"] == "from_import_as"
+        assert list_rel.metadata["original_name"] == "List"
+        assert list_rel.metadata["alias"] == "L"
+
+        # Dict - should NOT have alias metadata
+        dict_rel = imports_by_symbol["Dict"]
+        assert dict_rel.metadata["import_style"] == "from_import"
+        assert "original_name" not in dict_rel.metadata
+        assert "alias" not in dict_rel.metadata
+
+        # Optional as Opt - should have alias metadata
+        opt_rel = imports_by_symbol["Optional as Opt"]
+        assert opt_rel.metadata["import_style"] == "from_import_as"
+        assert opt_rel.metadata["original_name"] == "Optional"
+        assert opt_rel.metadata["alias"] == "Opt"
 
 
 class TestEdgeCases:

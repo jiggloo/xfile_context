@@ -9,11 +9,16 @@ relationships in Python code and resolves them to file paths.
 Supports:
 - import module
 - from module import name
+- Aliased imports: import module as alias, from module import name as alias
 - Relative imports: from . import, from .. import
 - Module resolution to project-local file paths
 - Standard library and third-party package detection
 
-See TDD Section 3.5.2.1 for detailed specifications.
+Alias Tracking (TDD Section 3.5.2.4, EC-3):
+- For aliased imports, metadata includes both 'original_name' and 'alias'
+- Enables function call matching against both original and alias names
+
+See TDD Section 3.5.2.1 and 3.5.2.4 for detailed specifications.
 """
 
 import ast
@@ -196,15 +201,25 @@ class ImportDetector(RelationshipDetector):
                 module_name = alias.name
                 target_file = self._resolve_module(module_name, filepath)
 
-                # Determine import style
+                # Determine import style and build metadata
                 if alias.asname:
-                    # import foo as bar (aliased import - will be handled by AliasedImportDetector)
-                    # For now, track basic import relationship
+                    # import foo as bar (aliased import)
+                    # Track both original name and alias per TDD Section 3.5.2.4 (EC-3)
                     import_style = "import_as"
                     imported_names = f"{alias.name} as {alias.asname}"
+                    metadata = {
+                        "import_style": import_style,
+                        "module_name": module_name,
+                        "original_name": alias.name,
+                        "alias": alias.asname,
+                    }
                 else:
                     import_style = "import"
                     imported_names = alias.name
+                    metadata = {
+                        "import_style": import_style,
+                        "module_name": module_name,
+                    }
 
                 rel = Relationship(
                     source_file=filepath,
@@ -213,10 +228,7 @@ class ImportDetector(RelationshipDetector):
                     line_number=node.lineno,
                     source_symbol=None,  # import statements don't have source symbols
                     target_symbol=imported_names,
-                    metadata={
-                        "import_style": import_style,
-                        "module_name": module_name,
-                    },
+                    metadata=metadata,
                 )
                 relationships.append(rel)
 
@@ -244,13 +256,27 @@ class ImportDetector(RelationshipDetector):
                     # Absolute import
                     target_file = self._resolve_module(actual_module_name, filepath)
 
+                # Determine import style and build metadata
                 if alias.asname:
                     # from foo import bar as baz (aliased import)
+                    # Track both original name and alias per TDD Section 3.5.2.4 (EC-3)
                     import_style = "from_import_as"
                     imported_names = f"{alias.name} as {alias.asname}"
+                    metadata = {
+                        "import_style": import_style,
+                        "module_name": module_name if module_name else f"{'.' * level}",
+                        "relative_level": str(level),
+                        "original_name": alias.name,
+                        "alias": alias.asname,
+                    }
                 else:
                     import_style = "from_import"
                     imported_names = alias.name
+                    metadata = {
+                        "import_style": import_style,
+                        "module_name": module_name if module_name else f"{'.' * level}",
+                        "relative_level": str(level),
+                    }
 
                 rel = Relationship(
                     source_file=filepath,
@@ -259,11 +285,7 @@ class ImportDetector(RelationshipDetector):
                     line_number=node.lineno,
                     source_symbol=None,
                     target_symbol=imported_names,
-                    metadata={
-                        "import_style": import_style,
-                        "module_name": module_name if module_name else f"{'.' * level}",
-                        "relative_level": str(level),
-                    },
+                    metadata=metadata,
                 )
                 relationships.append(rel)
 
@@ -282,7 +304,6 @@ class ImportDetector(RelationshipDetector):
         Args:
             module_name: Name of the module to resolve (e.g., 'os', 'foo.bar').
             filepath: Absolute path to the file containing the import.
-            is_relative: Whether this is a relative import.
 
         Returns:
             Resolved file path, or special marker for stdlib/third-party/unresolved.
