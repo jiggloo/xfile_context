@@ -234,7 +234,9 @@ class PytestConfig:
         if parser.has_option(section, "testpaths"):
             testpaths_str = parser.get(section, "testpaths")
             testpaths = [p.strip() for p in testpaths_str.split()]
-            self.testpaths = self._validate_patterns(testpaths, self.MAX_TESTPATHS, "testpaths")
+            self.testpaths = self._validate_patterns(
+                testpaths, self.MAX_TESTPATHS, "testpaths", self.DEFAULT_TEST_PATHS
+            )
             found_any = True
         else:
             self.testpaths = self.DEFAULT_TEST_PATHS.copy()
@@ -243,7 +245,7 @@ class PytestConfig:
             python_files_str = parser.get(section, "python_files")
             python_files = [p.strip() for p in python_files_str.split()]
             self.python_files = self._validate_patterns(
-                python_files, self.MAX_PYTHON_FILES, "python_files"
+                python_files, self.MAX_PYTHON_FILES, "python_files", self.DEFAULT_PYTHON_FILES
             )
             found_any = True
         else:
@@ -268,7 +270,7 @@ class PytestConfig:
                 # Validate all elements are strings
                 if all(isinstance(p, str) for p in testpaths):
                     self.testpaths = self._validate_patterns(
-                        testpaths, self.MAX_TESTPATHS, "testpaths"
+                        testpaths, self.MAX_TESTPATHS, "testpaths", self.DEFAULT_TEST_PATHS
                     )
                     found_any = True
                 else:
@@ -277,7 +279,7 @@ class PytestConfig:
             elif isinstance(testpaths, str):
                 testpaths_list = [p.strip() for p in testpaths.split()]
                 self.testpaths = self._validate_patterns(
-                    testpaths_list, self.MAX_TESTPATHS, "testpaths"
+                    testpaths_list, self.MAX_TESTPATHS, "testpaths", self.DEFAULT_TEST_PATHS
                 )
                 found_any = True
         else:
@@ -289,7 +291,10 @@ class PytestConfig:
                 # Validate all elements are strings
                 if all(isinstance(p, str) for p in python_files):
                     self.python_files = self._validate_patterns(
-                        python_files, self.MAX_PYTHON_FILES, "python_files"
+                        python_files,
+                        self.MAX_PYTHON_FILES,
+                        "python_files",
+                        self.DEFAULT_PYTHON_FILES,
                     )
                     found_any = True
                 else:
@@ -298,7 +303,10 @@ class PytestConfig:
             elif isinstance(python_files, str):
                 python_files_list = [p.strip() for p in python_files.split()]
                 self.python_files = self._validate_patterns(
-                    python_files_list, self.MAX_PYTHON_FILES, "python_files"
+                    python_files_list,
+                    self.MAX_PYTHON_FILES,
+                    "python_files",
+                    self.DEFAULT_PYTHON_FILES,
                 )
                 found_any = True
         else:
@@ -307,7 +315,7 @@ class PytestConfig:
         return found_any
 
     def _validate_patterns(
-        self, patterns: List[str], max_count: int, pattern_type: str
+        self, patterns: List[str], max_count: int, pattern_type: str, default: List[str]
     ) -> List[str]:
         """Validate patterns for security limits.
 
@@ -315,9 +323,10 @@ class PytestConfig:
             patterns: List of patterns to validate
             max_count: Maximum number of patterns allowed
             pattern_type: Type of patterns (for logging)
+            default: Default patterns to use if all patterns filtered out
 
         Returns:
-            Validated list of patterns (truncated if needed)
+            Validated list of patterns (truncated if needed), or default if empty
         """
         validated = []
 
@@ -344,7 +353,7 @@ class PytestConfig:
 
             validated.append(pattern)
 
-        return validated if validated else self.DEFAULT_TEST_PATHS.copy()
+        return validated if validated else default.copy()
 
     def get_test_patterns(self) -> List[str]:
         """Get all test file patterns.
