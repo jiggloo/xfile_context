@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from .detectors.dynamic_pattern_detector import DynamicPatternType, DynamicPatternWarning
 
 if TYPE_CHECKING:
+    from .warning_logger import WarningLogger
     from .warning_suppression import WarningSuppressionManager
 
 logger = logging.getLogger(__name__)
@@ -352,18 +353,24 @@ class WarningEmitter:
     It collects warnings from detectors and provides methods to:
     - Aggregate warnings across multiple files/detectors
     - Apply suppression configuration (TDD Section 3.9.4)
+    - Log warnings to JSONL file (TDD Section 3.9.5)
     - Emit warnings to logger
     - Export warnings in JSON or human-readable format
 
     Usage:
         from xfile_context.warning_suppression import WarningSuppressionManager
+        from xfile_context.warning_logger import WarningLogger
 
-        # Without suppression
+        # Without suppression or logging
         emitter = WarningEmitter()
 
         # With suppression
         suppression = WarningSuppressionManager.from_config(config)
         emitter = WarningEmitter(suppression_manager=suppression)
+
+        # With JSONL logging
+        warning_logger = WarningLogger()
+        emitter = WarningEmitter(warning_logger=warning_logger)
 
         # After detection phase
         for detector in detectors:
@@ -371,21 +378,28 @@ class WarningEmitter:
         # Get formatted output (suppressed warnings excluded)
         json_output = emitter.to_json()
         human_output = emitter.to_human_readable()
+
+        # Close logger when done
+        warning_logger.close()
     """
 
     def __init__(
         self,
         suppression_manager: Optional["WarningSuppressionManager"] = None,
+        warning_logger: Optional["WarningLogger"] = None,
     ) -> None:
         """Initialize the warning emitter.
 
         Args:
             suppression_manager: Optional WarningSuppressionManager for filtering warnings.
                                 If not provided, no suppression is applied.
+            warning_logger: Optional WarningLogger for JSONL file output (TDD Section 3.9.5).
+                           If provided, warnings are logged to file after suppression filtering.
         """
         self._warnings: List[StructuredWarning] = []
         self._formatter = WarningFormatter()
         self._suppression_manager = suppression_manager
+        self._warning_logger = warning_logger
 
     def add_warning(
         self,
@@ -394,6 +408,13 @@ class WarningEmitter:
         column: Optional[int] = None,
     ) -> None:
         """Add a single warning.
+
+        The warning is added to the in-memory list and optionally logged
+        to the JSONL file if a WarningLogger is configured.
+
+        Note: Logging to JSONL happens immediately for real-time persistence
+        (per TDD Section 3.9.5), but filtering (suppression, test module
+        exclusion) is applied at retrieval time via get_warnings().
 
         Args:
             warning: DynamicPatternWarning from a detector.
@@ -404,6 +425,12 @@ class WarningEmitter:
             warning, code_snippet=code_snippet, column=column
         )
         self._warnings.append(structured)
+
+        # Log to JSONL file if logger is configured
+        # Note: We log all warnings here; suppression is for output filtering
+        # but we want all warnings in the log for analysis
+        if self._warning_logger is not None:
+            self._warning_logger.log_warning(structured)
 
     def add_warnings(
         self,
@@ -536,6 +563,23 @@ class WarningEmitter:
                                 or None to disable suppression.
         """
         self._suppression_manager = suppression_manager
+
+    def set_warning_logger(self, warning_logger: Optional["WarningLogger"]) -> None:
+        """Set or update the warning logger.
+
+        Args:
+            warning_logger: WarningLogger for JSONL file output,
+                           or None to disable file logging.
+        """
+        self._warning_logger = warning_logger
+
+    def get_warning_logger(self) -> Optional["WarningLogger"]:
+        """Get the configured warning logger.
+
+        Returns:
+            The WarningLogger instance if configured, None otherwise.
+        """
+        return self._warning_logger
 
     def clear(self) -> None:
         """Clear all collected warnings."""
