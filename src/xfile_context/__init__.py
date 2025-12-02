@@ -5,7 +5,7 @@
 
 from .storage import GraphExport, InMemoryStore, RelationshipStore
 
-__version__ = "0.0.12"
+__version__ = "0.0.25"
 
 __all__ = [
     "RelationshipStore",

@@ -11,6 +11,7 @@ Components:
 - DetectorRegistry: Priority-based registry for detector plugins
 - ImportDetector: Detector for import relationships
 - ConditionalImportDetector: Detector for conditional import relationships
+- WildcardImportDetector: Detector for wildcard import relationships
 
 See TDD Section 3.4.4 for detailed specifications.
 """
@@ -19,10 +20,12 @@ from .base import RelationshipDetector
 from .conditional_import_detector import ConditionalImportDetector
 from .import_detector import ImportDetector
 from .registry import DetectorRegistry
+from .wildcard_import_detector import WildcardImportDetector
 
 __all__ = [
     "RelationshipDetector",
     "DetectorRegistry",
     "ImportDetector",
     "ConditionalImportDetector",
+    "WildcardImportDetector",
 ]
