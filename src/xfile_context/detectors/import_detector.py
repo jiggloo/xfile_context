@@ -112,7 +112,6 @@ class ImportDetector(RelationshipDetector):
             "socket",
             # Internet protocols
             "email",
-            "json",
             "urllib",
             "http",
             "ftplib",
@@ -195,7 +194,7 @@ class ImportDetector(RelationshipDetector):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 module_name = alias.name
-                target_file = self._resolve_module(module_name, filepath, is_relative=False)
+                target_file = self._resolve_module(module_name, filepath)
 
                 # Determine import style
                 if alias.asname:
@@ -243,9 +242,7 @@ class ImportDetector(RelationshipDetector):
                     target_file = self._resolve_relative_import(actual_module_name, filepath, level)
                 else:
                     # Absolute import
-                    target_file = self._resolve_module(
-                        actual_module_name, filepath, is_relative=False
-                    )
+                    target_file = self._resolve_module(actual_module_name, filepath)
 
                 if alias.asname:
                     # from foo import bar as baz (aliased import)
@@ -272,7 +269,7 @@ class ImportDetector(RelationshipDetector):
 
         return relationships
 
-    def _resolve_module(self, module_name: str, filepath: str, is_relative: bool) -> str:
+    def _resolve_module(self, module_name: str, filepath: str) -> str:
         """Resolve a module name to a file path.
 
         Implements the resolution order from TDD Section 3.5.2.1:
@@ -352,37 +349,42 @@ class ImportDetector(RelationshipDetector):
         Returns:
             Resolved file path, or special marker for unresolved.
         """
-        current_dir = Path(filepath).parent
+        try:
+            current_dir = Path(filepath).parent
 
-        # For level 1 (from . import), target is current directory
-        # For level 2 (from .. import), target is parent directory
-        # So we navigate up (level - 1) directories from current_dir
-        target_dir = current_dir
-        for _ in range(level - 1):
-            parent = target_dir.parent
-            if parent == target_dir:  # Reached filesystem root
-                logger.warning(
-                    f"⚠️ Relative import level {level} exceeds package depth in {filepath}"
-                )
-                return f"<unresolved:{'.' * level}{module_name}>"
-            target_dir = parent
+            # For level 1 (from . import), target is current directory
+            # For level 2 (from .. import), target is parent directory
+            # So we navigate up (level - 1) directories from current_dir
+            target_dir = current_dir
+            for _ in range(level - 1):
+                parent = target_dir.parent
+                if parent == target_dir:  # Reached filesystem root
+                    logger.warning(
+                        f"⚠️ Relative import level {level} exceeds package depth in {filepath}"
+                    )
+                    return f"<unresolved:{'.' * level}{module_name}>"
+                target_dir = parent
 
-        # If module_name is empty, we're importing from the target directory itself
-        if not module_name:
-            # Check if target directory is a package (has __init__.py)
-            init_file = target_dir / "__init__.py"
-            if init_file.exists():
-                return str(init_file)
-            else:
-                return f"<unresolved:{'.' * level}>"
+            # If module_name is empty, we're importing from the target directory itself
+            if not module_name:
+                # Check if target directory is a package (has __init__.py)
+                init_file = target_dir / "__init__.py"
+                if init_file.exists():
+                    return str(init_file)
+                else:
+                    return f"<unresolved:{'.' * level}>"
 
-        # Resolve module_name within target directory
-        parts = module_name.split(".")
-        resolved = self._try_resolve_in_directory(target_dir, parts)
-        if resolved:
-            return str(resolved)
+            # Resolve module_name within target directory
+            parts = module_name.split(".")
+            resolved = self._try_resolve_in_directory(target_dir, parts)
+            if resolved:
+                return str(resolved)
 
-        return f"<unresolved:{'.' * level}{module_name}>"
+            return f"<unresolved:{'.' * level}{module_name}>"
+        except (OSError, ValueError) as e:
+            # Handle filesystem errors (path too long, invalid characters, etc.)
+            logger.debug(f"Error resolving relative import: {type(e).__name__}")
+            return f"<unresolved:{'.' * level}{module_name}>"
 
     def _try_resolve_in_directory(self, directory: Path, module_parts: List[str]) -> Optional[Path]:
         """Try to resolve a module within a specific directory.
@@ -403,28 +405,37 @@ class ImportDetector(RelationshipDetector):
         if not module_parts:
             return None
 
-        # Build path iteratively
-        current_path = directory
-        for i, part in enumerate(module_parts):
-            # Last part: check for both .py file and package
-            if i == len(module_parts) - 1:
-                # Check for module file first (higher priority per TDD 3.5.2.1)
-                module_file = current_path / f"{part}.py"
-                package_init = current_path / part / "__init__.py"
+        try:
+            # Build path iteratively
+            current_path = directory
+            for i, part in enumerate(module_parts):
+                # Last part: check for both .py file and package
+                if i == len(module_parts) - 1:
+                    # Check for module file first (higher priority per TDD 3.5.2.1)
+                    module_file = current_path / f"{part}.py"
+                    package_init = current_path / part / "__init__.py"
 
-                if module_file.exists():
-                    return module_file
-                elif package_init.exists():
-                    return package_init
+                    if module_file.exists():
+                        return module_file
+                    elif package_init.exists():
+                        return package_init
+                    else:
+                        return None
                 else:
-                    return None
-            else:
-                # Intermediate part: must be a package
-                current_path = current_path / part
-                if not (current_path / "__init__.py").exists():
-                    return None
+                    # Intermediate part: must be a package
+                    current_path = current_path / part
+                    if not (current_path / "__init__.py").exists():
+                        return None
 
-        return None
+            return None
+        except (OSError, ValueError) as e:
+            # Handle filesystem errors (path too long, invalid characters, etc.)
+            # Log at debug level to avoid log spam from malicious input
+            logger.debug(
+                f"Filesystem error resolving module {'.'.join(module_parts)} "
+                f"in {directory}: {type(e).__name__}"
+            )
+            return None
 
     def _is_known_third_party(self, module_name: str) -> bool:
         """Check if a module is a known third-party package.
