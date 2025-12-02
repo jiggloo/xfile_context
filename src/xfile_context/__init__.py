@@ -3,6 +3,7 @@
 
 """Cross-File Context Links MCP Server."""
 
+from .cache import WorkingMemoryCache
 from .storage import GraphExport, InMemoryStore, RelationshipStore
 
 __version__ = "0.0.25"
@@ -11,4 +12,5 @@ __all__ = [
     "RelationshipStore",
     "InMemoryStore",
     "GraphExport",
+    "WorkingMemoryCache",
 ]
