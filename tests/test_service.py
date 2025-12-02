@@ -116,13 +116,8 @@ class TestCrossFileContextService:
         graph_export = service.get_relationship_graph()
 
         assert graph_export is not None
-        # export_graph() returns GraphExport which has to_dict method
-        # InMemoryStore returns dict directly from export_graph().to_dict()
-        if hasattr(graph_export, "to_dict"):
-            graph_dict = graph_export.to_dict()
-        else:
-            # Already a dict (from InMemoryStore)
-            graph_dict = graph_export
+        # export_graph() returns a dict from InMemoryStore
+        graph_dict = graph_export.to_dict() if hasattr(graph_export, "to_dict") else graph_export
         assert "relationships" in graph_dict
 
     def test_get_dependents(self):

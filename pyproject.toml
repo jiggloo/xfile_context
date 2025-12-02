@@ -80,3 +80,7 @@ asyncio_default_fixture_loop_scope = "function"
 mypy_path = "src"
 explicit_package_bases = true
 namespace_packages = true
+
+[[tool.mypy.overrides]]
+module = "mcp.*"
+ignore_missing_imports = true

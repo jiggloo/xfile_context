@@ -10,8 +10,8 @@ All business logic is delegated to CrossFileContextService per DD-6 (layered arc
 import logging
 from typing import Any, Dict, Optional
 
-from mcp.server.fastmcp import Context, FastMCP  # type: ignore[import-not-found]
-from mcp.server.session import ServerSession  # type: ignore[import-not-found]
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.session import ServerSession
 
 from .cache import WorkingMemoryCache
 from .config import Config
@@ -85,7 +85,7 @@ class CrossFileContextMCPServer:
         - get_relationship_graph: Export relationship graph
         """
 
-        @self.mcp.tool()  # type: ignore[misc]
+        @self.mcp.tool()
         async def read_with_context(
             file_path: str,
             ctx: Context[ServerSession, None],
@@ -138,7 +138,7 @@ class CrossFileContextMCPServer:
                 await ctx.error(f"Unexpected error reading {file_path}: {e}")
                 raise
 
-        @self.mcp.tool()  # type: ignore[misc]
+        @self.mcp.tool()
         async def get_relationship_graph(
             ctx: Context[ServerSession, None],
         ) -> Dict[str, Any]:
@@ -163,11 +163,12 @@ class CrossFileContextMCPServer:
                 graph_export = self.service.get_relationship_graph()
 
                 # Format response per MCP specification
-                # graph_export can be GraphExport or dict depending on store
+                # graph_export may have to_dict method or be a dict directly
                 if hasattr(graph_export, "to_dict"):
-                    response = graph_export.to_dict()  # type: ignore[attr-defined]
+                    response: Dict[str, Any] = graph_export.to_dict()
                 else:
-                    response = graph_export  # type: ignore[assignment]
+                    # Already a dict (from InMemoryStore.export_graph)
+                    response = graph_export
 
                 await ctx.info(
                     f"Graph exported: {len(response.get('nodes', []))} nodes, "
@@ -218,7 +219,7 @@ class CrossFileContextMCPServer:
                 - "sse": Server-sent events transport
         """
         logger.info(f"Starting MCP server with {transport} transport")
-        self.mcp.run(transport=transport)
+        self.mcp.run(transport=transport)  # type: ignore[arg-type]
 
     def shutdown(self) -> None:
         """Shutdown the MCP server and cleanup resources."""
