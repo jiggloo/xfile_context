@@ -74,7 +74,7 @@ jobs:
 
       - name: Type check with mypy
         run: |
-          mypy src/ --strict
+          mypy --package xfile_context --strict
           mypy tests/ --no-strict-optional --allow-untyped-defs --allow-incomplete-defs
 
   fast-tests:
