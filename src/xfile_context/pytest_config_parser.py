@@ -52,6 +52,12 @@ class PytestConfig:
     - python_files: File patterns for test modules
 
     Falls back to default patterns if no config found.
+
+    Security limits:
+    - Max config file size: 10MB
+    - Max testpaths: 100
+    - Max python_files: 50
+    - Max pattern length: 500 characters
     """
 
     # Default patterns from TDD Section 3.9.2
@@ -59,6 +65,12 @@ class PytestConfig:
     DEFAULT_PYTHON_FILES: List[str] = ["test_*.py", "*_test.py"]
     DEFAULT_CONFTEST_PATTERN: str = "**/conftest.py"
     DEFAULT_TESTS_DIR_PATTERN: str = "**/tests/**/*.py"
+
+    # Security limits to prevent resource exhaustion
+    MAX_CONFIG_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
+    MAX_TESTPATHS: int = 100
+    MAX_PYTHON_FILES: int = 50
+    MAX_PATTERN_LENGTH: int = 500
 
     def __init__(self, project_root: Path):
         """Initialize pytest config parser.
@@ -76,6 +88,8 @@ class PytestConfig:
 
         Tries config files in order of precedence. Stops at first valid config.
         Falls back to defaults if no config found or parsing fails.
+
+        Security: Validates file size before parsing to prevent resource exhaustion.
         """
         if self._loaded:
             return
@@ -92,6 +106,14 @@ class PytestConfig:
 
         for config_path, loader_func in config_loaders:
             if config_path.exists():
+                # Security: Check file size before parsing
+                if not self._validate_file_size(config_path):
+                    logger.warning(
+                        f"Config file {config_path} exceeds size limit "
+                        f"({self.MAX_CONFIG_FILE_SIZE} bytes), skipping"
+                    )
+                    continue
+
                 try:
                     if loader_func(config_path):
                         logger.info(f"Loaded pytest config from {config_path}")
@@ -104,6 +126,22 @@ class PytestConfig:
         logger.info("No pytest config found, using default patterns")
         self.testpaths = self.DEFAULT_TEST_PATHS.copy()
         self.python_files = self.DEFAULT_PYTHON_FILES.copy()
+
+    def _validate_file_size(self, config_path: Path) -> bool:
+        """Validate config file size to prevent resource exhaustion.
+
+        Args:
+            config_path: Path to config file
+
+        Returns:
+            True if file size is within limits, False otherwise
+        """
+        try:
+            file_size = config_path.stat().st_size
+            return file_size <= self.MAX_CONFIG_FILE_SIZE
+        except OSError as e:
+            logger.warning(f"Failed to check file size for {config_path}: {e}")
+            return False
 
     def _load_pytest_ini(self, config_path: Path) -> bool:
         """Load configuration from pytest.ini.
@@ -195,14 +233,18 @@ class PytestConfig:
 
         if parser.has_option(section, "testpaths"):
             testpaths_str = parser.get(section, "testpaths")
-            self.testpaths = [p.strip() for p in testpaths_str.split()]
+            testpaths = [p.strip() for p in testpaths_str.split()]
+            self.testpaths = self._validate_patterns(testpaths, self.MAX_TESTPATHS, "testpaths")
             found_any = True
         else:
             self.testpaths = self.DEFAULT_TEST_PATHS.copy()
 
         if parser.has_option(section, "python_files"):
             python_files_str = parser.get(section, "python_files")
-            self.python_files = [p.strip() for p in python_files_str.split()]
+            python_files = [p.strip() for p in python_files_str.split()]
+            self.python_files = self._validate_patterns(
+                python_files, self.MAX_PYTHON_FILES, "python_files"
+            )
             found_any = True
         else:
             self.python_files = self.DEFAULT_PYTHON_FILES.copy()
@@ -223,10 +265,20 @@ class PytestConfig:
         if "testpaths" in config_dict:
             testpaths = config_dict["testpaths"]
             if isinstance(testpaths, list):
-                self.testpaths = testpaths
-                found_any = True
+                # Validate all elements are strings
+                if all(isinstance(p, str) for p in testpaths):
+                    self.testpaths = self._validate_patterns(
+                        testpaths, self.MAX_TESTPATHS, "testpaths"
+                    )
+                    found_any = True
+                else:
+                    logger.warning("testpaths contains non-string values, using defaults")
+                    self.testpaths = self.DEFAULT_TEST_PATHS.copy()
             elif isinstance(testpaths, str):
-                self.testpaths = [p.strip() for p in testpaths.split()]
+                testpaths_list = [p.strip() for p in testpaths.split()]
+                self.testpaths = self._validate_patterns(
+                    testpaths_list, self.MAX_TESTPATHS, "testpaths"
+                )
                 found_any = True
         else:
             self.testpaths = self.DEFAULT_TEST_PATHS.copy()
@@ -234,15 +286,65 @@ class PytestConfig:
         if "python_files" in config_dict:
             python_files = config_dict["python_files"]
             if isinstance(python_files, list):
-                self.python_files = python_files
-                found_any = True
+                # Validate all elements are strings
+                if all(isinstance(p, str) for p in python_files):
+                    self.python_files = self._validate_patterns(
+                        python_files, self.MAX_PYTHON_FILES, "python_files"
+                    )
+                    found_any = True
+                else:
+                    logger.warning("python_files contains non-string values, using defaults")
+                    self.python_files = self.DEFAULT_PYTHON_FILES.copy()
             elif isinstance(python_files, str):
-                self.python_files = [p.strip() for p in python_files.split()]
+                python_files_list = [p.strip() for p in python_files.split()]
+                self.python_files = self._validate_patterns(
+                    python_files_list, self.MAX_PYTHON_FILES, "python_files"
+                )
                 found_any = True
         else:
             self.python_files = self.DEFAULT_PYTHON_FILES.copy()
 
         return found_any
+
+    def _validate_patterns(
+        self, patterns: List[str], max_count: int, pattern_type: str
+    ) -> List[str]:
+        """Validate patterns for security limits.
+
+        Args:
+            patterns: List of patterns to validate
+            max_count: Maximum number of patterns allowed
+            pattern_type: Type of patterns (for logging)
+
+        Returns:
+            Validated list of patterns (truncated if needed)
+        """
+        validated = []
+
+        for i, pattern in enumerate(patterns):
+            # Check count limit
+            if i >= max_count:
+                logger.warning(f"{pattern_type} exceeds limit of {max_count}, truncating")
+                break
+
+            # Check pattern length
+            if len(pattern) > self.MAX_PATTERN_LENGTH:
+                logger.warning(
+                    f"{pattern_type} pattern exceeds length limit "
+                    f"({self.MAX_PATTERN_LENGTH} chars), skipping: {pattern[:50]}..."
+                )
+                continue
+
+            # Check for path traversal patterns
+            if ".." in pattern or pattern.startswith("/"):
+                logger.warning(
+                    f"{pattern_type} pattern contains unsafe characters, skipping: {pattern}"
+                )
+                continue
+
+            validated.append(pattern)
+
+        return validated if validated else self.DEFAULT_TEST_PATHS.copy()
 
     def get_test_patterns(self) -> List[str]:
         """Get all test file patterns.
