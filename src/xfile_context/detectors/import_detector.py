@@ -304,7 +304,6 @@ class ImportDetector(RelationshipDetector):
         Args:
             module_name: Name of the module to resolve (e.g., 'os', 'foo.bar').
             filepath: Absolute path to the file containing the import.
-            is_relative: Whether this is a relative import.
 
         Returns:
             Resolved file path, or special marker for stdlib/third-party/unresolved.
