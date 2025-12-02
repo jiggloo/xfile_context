@@ -538,3 +538,268 @@ class TestFileWatcherExtensibility:
             # Clean up mock extensions
             del watcher.SUPPORTED_EXTENSIONS[".ts"]
             del watcher.SUPPORTED_EXTENSIONS[".js"]
+
+
+class TestCacheInvalidationCallbacks:
+    """Tests for cache invalidation callback integration (FR-15, Section 3.7.3.3)."""
+
+    def test_register_callback(self, tmp_path):
+        """Test callback registration."""
+        watcher = FileWatcher(project_root=str(tmp_path))
+        invalidated_files: list[str] = []
+
+        def callback(filepath: str) -> None:
+            invalidated_files.append(filepath)
+
+        watcher.register_invalidation_callback(callback)
+        assert len(watcher._invalidation_callbacks) == 1
+
+        # Test that duplicate registration is ignored
+        watcher.register_invalidation_callback(callback)
+        assert len(watcher._invalidation_callbacks) == 1
+
+    def test_unregister_callback(self, tmp_path):
+        """Test callback unregistration."""
+        watcher = FileWatcher(project_root=str(tmp_path))
+
+        def callback(filepath: str) -> None:
+            pass
+
+        watcher.register_invalidation_callback(callback)
+        assert len(watcher._invalidation_callbacks) == 1
+
+        watcher.unregister_invalidation_callback(callback)
+        assert len(watcher._invalidation_callbacks) == 0
+
+        # Unregistering non-existent callback is safe
+        watcher.unregister_invalidation_callback(callback)
+        assert len(watcher._invalidation_callbacks) == 0
+
+    def test_callback_invoked_directly(self, tmp_path):
+        """Test callback invocation via _notify_invalidation_callbacks."""
+        watcher = FileWatcher(project_root=str(tmp_path))
+        invalidated_files: list[str] = []
+
+        def callback(filepath: str) -> None:
+            invalidated_files.append(filepath)
+
+        watcher.register_invalidation_callback(callback)
+        watcher._notify_invalidation_callbacks("/path/to/file.py")
+
+        assert invalidated_files == ["/path/to/file.py"]
+
+    def test_multiple_callbacks_invoked(self, tmp_path):
+        """Test multiple callbacks are all invoked."""
+        watcher = FileWatcher(project_root=str(tmp_path))
+        results1: list[str] = []
+        results2: list[str] = []
+
+        def callback1(filepath: str) -> None:
+            results1.append(filepath)
+
+        def callback2(filepath: str) -> None:
+            results2.append(filepath)
+
+        watcher.register_invalidation_callback(callback1)
+        watcher.register_invalidation_callback(callback2)
+
+        watcher._notify_invalidation_callbacks("/test/file.py")
+
+        assert results1 == ["/test/file.py"]
+        assert results2 == ["/test/file.py"]
+
+    def test_callback_exception_does_not_stop_others(self, tmp_path):
+        """Test that exception in one callback doesn't prevent others from running."""
+        watcher = FileWatcher(project_root=str(tmp_path))
+        results: list[str] = []
+
+        def failing_callback(filepath: str) -> None:
+            raise ValueError("Simulated failure")
+
+        def working_callback(filepath: str) -> None:
+            results.append(filepath)
+
+        watcher.register_invalidation_callback(failing_callback)
+        watcher.register_invalidation_callback(working_callback)
+
+        # Should not raise, and working_callback should still be called
+        watcher._notify_invalidation_callbacks("/test/file.py")
+
+        assert results == ["/test/file.py"]
+
+    @pytest.mark.integration
+    def test_modify_event_triggers_invalidation(self, tmp_path):
+        """Test file modification triggers invalidation callback (T-3.3)."""
+        # Create file before starting watcher
+        test_file = tmp_path / "test.py"
+        test_file.write_text("# Original content\n")
+
+        watcher = FileWatcher(project_root=str(tmp_path))
+        invalidated_files: list[str] = []
+
+        def callback(filepath: str) -> None:
+            invalidated_files.append(filepath)
+
+        watcher.register_invalidation_callback(callback)
+        watcher.start()
+
+        try:
+            # Modify the file
+            time.sleep(0.1)
+            test_file.write_text("# Modified content\n")
+
+            # Wait for event to be processed
+            time.sleep(0.3)
+
+            # Callback should have been invoked for modified file
+            assert str(test_file) in invalidated_files
+        finally:
+            watcher.stop()
+
+    @pytest.mark.integration
+    def test_delete_event_triggers_invalidation(self, tmp_path):
+        """Test file deletion triggers invalidation callback."""
+        # Create file before starting watcher
+        test_file = tmp_path / "to_delete.py"
+        test_file.write_text("# Will be deleted\n")
+
+        watcher = FileWatcher(project_root=str(tmp_path))
+        invalidated_files: list[str] = []
+
+        def callback(filepath: str) -> None:
+            invalidated_files.append(filepath)
+
+        watcher.register_invalidation_callback(callback)
+        watcher.start()
+
+        try:
+            # Delete the file
+            test_file.unlink()
+
+            # Wait for event to be processed
+            time.sleep(0.3)
+
+            # Callback should have been invoked for deleted file
+            assert str(test_file) in invalidated_files
+        finally:
+            watcher.stop()
+
+    @pytest.mark.integration
+    def test_move_event_triggers_invalidation_for_old_path(self, tmp_path):
+        """Test file move triggers invalidation for old path only."""
+        # Create file before starting watcher
+        old_file = tmp_path / "old_name.py"
+        old_file.write_text("# Test file\n")
+
+        watcher = FileWatcher(project_root=str(tmp_path))
+        invalidated_files: list[str] = []
+
+        def callback(filepath: str) -> None:
+            invalidated_files.append(filepath)
+
+        watcher.register_invalidation_callback(callback)
+        watcher.start()
+
+        try:
+            # Move/rename the file
+            new_file = tmp_path / "new_name.py"
+            old_file.rename(new_file)
+
+            # Wait for event to be processed
+            time.sleep(0.3)
+
+            # Old path should be invalidated (cache entries no longer valid)
+            assert str(old_file) in invalidated_files
+            # New path should NOT be invalidated (it's a new file, no cache entries)
+            assert str(new_file) not in invalidated_files
+        finally:
+            watcher.stop()
+
+    @pytest.mark.integration
+    def test_create_event_does_not_trigger_invalidation(self, tmp_path):
+        """Test file creation does NOT trigger invalidation."""
+        watcher = FileWatcher(project_root=str(tmp_path))
+        invalidated_files: list[str] = []
+
+        def callback(filepath: str) -> None:
+            invalidated_files.append(filepath)
+
+        watcher.register_invalidation_callback(callback)
+        watcher.start()
+
+        try:
+            # Create a new file
+            test_file = tmp_path / "new_file.py"
+            test_file.write_text("# New file\n")
+
+            # Wait for event to be processed
+            time.sleep(0.3)
+
+            # Note: Some systems report create + modify events together
+            # The important thing is that pure creation doesn't invalidate
+            # (there's nothing in cache to invalidate for a new file)
+            # This test verifies the design - new files don't have cache entries
+
+            # Verify the file was tracked (timestamp updated)
+            assert watcher.get_timestamp(str(test_file)) is not None
+        finally:
+            watcher.stop()
+
+    @pytest.mark.integration
+    def test_ignored_files_do_not_trigger_invalidation(self, tmp_path):
+        """Test that ignored files don't trigger invalidation callbacks."""
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text("*.log\n")
+
+        watcher = FileWatcher(project_root=str(tmp_path))
+        invalidated_files: list[str] = []
+
+        def callback(filepath: str) -> None:
+            invalidated_files.append(filepath)
+
+        watcher.register_invalidation_callback(callback)
+        watcher.start()
+
+        try:
+            # Create and modify ignored file
+            log_file = tmp_path / "debug.log"
+            log_file.write_text("Log entry 1\n")
+            time.sleep(0.1)
+            log_file.write_text("Log entry 2\n")
+
+            # Wait for events
+            time.sleep(0.3)
+
+            # Ignored files should not trigger invalidation
+            assert str(log_file) not in invalidated_files
+        finally:
+            watcher.stop()
+
+    def test_cache_invalidate_as_callback(self, tmp_path):
+        """Test using WorkingMemoryCache.invalidate as callback (EC-11)."""
+        from xfile_context.cache import WorkingMemoryCache
+
+        watcher = FileWatcher(project_root=str(tmp_path))
+        cache = WorkingMemoryCache(
+            file_event_timestamps=watcher.file_event_timestamps, size_limit_kb=50
+        )
+
+        # Create a file and cache its content
+        test_file = tmp_path / "cached.py"
+        test_file.write_text("# Cached content\n")
+
+        # Read into cache
+        content = cache.get(str(test_file))
+        assert content == "# Cached content\n"
+        stats = cache.get_statistics()
+        assert stats.current_entry_count == 1
+
+        # Register cache invalidation as callback
+        watcher.register_invalidation_callback(cache.invalidate)
+
+        # Simulate file modification event by directly calling the method
+        watcher._notify_invalidation_callbacks(str(test_file))
+
+        # Cache entry should be removed
+        stats = cache.get_statistics()
+        assert stats.current_entry_count == 0

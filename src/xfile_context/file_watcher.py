@@ -8,16 +8,23 @@ This module implements file system monitoring (TDD Section 3.6):
 - Timestamp-only tracking (no immediate analysis)
 - Extension-based dispatch to language analyzers
 - .gitignore and hardcoded ignore patterns
+- Cache invalidation callbacks on file modify/delete (Section 3.7.3.3)
 
 Design Decisions:
 - DD-2: Language-agnostic watcher extensible to TypeScript, etc.
 - NFR-7: Respect .gitignore patterns
 - NFR-8: Ignore dependency directories
+- FR-15: Cache invalidation on file modification
 
 Performance Characteristics (TDD Section 3.6.2):
 - No debouncing: Timestamp updates are cheap, last write wins
 - No batching: Bulk operations handled by fast timestamp updates
 - Thread-safe: GIL ensures atomicity for dict operations
+
+Cache Invalidation (TDD Section 3.7.3.3):
+- Callbacks registered via register_invalidation_callback()
+- Invoked synchronously on file modify/delete events
+- Enables immediate cache entry removal for stale files
 
 Known Limitations:
 - Memory: file_event_timestamps dict grows unbounded (no cleanup of deleted files)
@@ -32,7 +39,7 @@ import fnmatch
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Optional, Set
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set
 
 from watchdog.events import FileMovedEvent, FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
@@ -41,6 +48,10 @@ if TYPE_CHECKING:
     from watchdog.observers.api import BaseObserver
 
 logger = logging.getLogger(__name__)
+
+# Type alias for invalidation callbacks
+# Callback signature: (filepath: str) -> None
+InvalidationCallback = Callable[[str], None]
 
 
 class FileWatcher:
@@ -135,6 +146,10 @@ class FileWatcher:
 
         # Load ignore patterns
         self._gitignore_patterns: Set[str] = self._load_gitignore()
+
+        # Invalidation callbacks (FR-15, Section 3.7.3.3)
+        # Called on file modify/delete events to invalidate cache entries
+        self._invalidation_callbacks: List[InvalidationCallback] = []
 
         # Watchdog observer and handler
         self._observer: Optional[BaseObserver] = None
@@ -292,6 +307,57 @@ class FileWatcher:
         path = Path(file_path)
         return self.SUPPORTED_EXTENSIONS.get(path.suffix)
 
+    def register_invalidation_callback(self, callback: InvalidationCallback) -> None:
+        """Register a callback for cache invalidation on file events.
+
+        Callbacks are invoked when files are modified or deleted (FR-15).
+        This enables cache systems to immediately invalidate stale entries.
+
+        Thread Safety:
+            Callbacks are invoked synchronously from the watcher thread.
+            Callbacks should be thread-safe and return quickly to avoid
+            blocking file event processing.
+
+        Args:
+            callback: Function that takes filepath (str) and invalidates
+                related cache entries. Should handle exceptions internally.
+
+        Example:
+            watcher.register_invalidation_callback(cache.invalidate)
+        """
+        if callback not in self._invalidation_callbacks:
+            self._invalidation_callbacks.append(callback)
+            logger.debug(f"Registered invalidation callback: {callback}")
+
+    def unregister_invalidation_callback(self, callback: InvalidationCallback) -> None:
+        """Unregister a previously registered invalidation callback.
+
+        Args:
+            callback: Previously registered callback to remove.
+        """
+        if callback in self._invalidation_callbacks:
+            self._invalidation_callbacks.remove(callback)
+            logger.debug(f"Unregistered invalidation callback: {callback}")
+
+    def _notify_invalidation_callbacks(self, file_path: str) -> None:
+        """Notify all registered callbacks about file modification/deletion.
+
+        Called internally when file events occur that require cache invalidation.
+
+        Thread Safety:
+            Called from watcher thread. Callbacks should be thread-safe.
+
+        Args:
+            file_path: Absolute path to modified/deleted file.
+        """
+        for callback in self._invalidation_callbacks:
+            try:
+                callback(file_path)
+            except Exception as e:
+                # Log but don't re-raise - one callback failure shouldn't
+                # prevent other callbacks from being notified
+                logger.error(f"Invalidation callback failed for {file_path}: {e}")
+
     def update_timestamp(self, file_path: str) -> None:
         """Update timestamp for file event.
 
@@ -363,11 +429,13 @@ class _FileEventHandler(FileSystemEventHandler):
         super().__init__()
         self.watcher = watcher
 
-    def _handle_event(self, event: FileSystemEvent) -> None:
+    def _handle_event(self, event: FileSystemEvent, trigger_invalidation: bool = False) -> None:
         """Common event handling logic.
 
         Args:
             event: File system event from watchdog
+            trigger_invalidation: Whether to trigger cache invalidation callbacks.
+                Should be True for modify/delete events (FR-15, Section 3.7.3.3).
         """
         # Skip directory events
         if event.is_directory:
@@ -387,6 +455,10 @@ class _FileEventHandler(FileSystemEventHandler):
         # Update timestamp (TDD Section 3.6.2: timestamp-only approach)
         self.watcher.update_timestamp(file_path)
 
+        # Trigger cache invalidation for modify/delete events (FR-15)
+        if trigger_invalidation:
+            self.watcher._notify_invalidation_callbacks(file_path)
+
         # Log the event with language info
         language = self.watcher.get_language(file_path)
         logger.debug(f"Event: {event.event_type} - {file_path} (language: {language})")
@@ -402,25 +474,29 @@ class _FileEventHandler(FileSystemEventHandler):
     def on_modified(self, event: FileSystemEvent) -> None:
         """Handle file modification events.
 
+        Triggers cache invalidation (FR-15, Section 3.7.3.3).
+
         Args:
             event: File system event
         """
-        self._handle_event(event)
+        self._handle_event(event, trigger_invalidation=True)
 
     def on_deleted(self, event: FileSystemEvent) -> None:
         """Handle file deletion events.
 
+        Triggers cache invalidation (FR-15, Section 3.7.3.3).
         Note: Timestamp entry persists in dict (acceptable memory overhead).
 
         Args:
             event: File system event
         """
-        self._handle_event(event)
+        self._handle_event(event, trigger_invalidation=True)
 
     def on_moved(self, event: FileSystemEvent) -> None:
         """Handle file move/rename events.
 
         Treated as Delete (old path) + Create (new path).
+        Triggers cache invalidation for old path (FR-15, Section 3.7.3.3).
 
         Args:
             event: File system event (must be FileMovedEvent)
@@ -436,12 +512,14 @@ class _FileEventHandler(FileSystemEventHandler):
         src_path = str(event.src_path)
         dest_path = str(event.dest_path)
 
-        # Old path: Mark as deleted
+        # Old path: Mark as deleted and invalidate cache
         if not self.watcher.should_ignore(src_path) and self.watcher.is_supported_file(src_path):
             self.watcher.update_timestamp(src_path)
+            # Invalidate cache for old path (file no longer exists at this location)
+            self.watcher._notify_invalidation_callbacks(src_path)
             logger.debug(f"Event: moved_from - {src_path}")
 
-        # New path: Mark as created
+        # New path: Mark as created (no invalidation needed - new file)
         if not self.watcher.should_ignore(dest_path) and self.watcher.is_supported_file(dest_path):
             self.watcher.update_timestamp(dest_path)
             language = self.watcher.get_language(dest_path)
