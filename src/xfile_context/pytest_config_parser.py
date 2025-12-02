@@ -1,0 +1,340 @@
+# Copyright (c) 2025 Henru Wang
+# All rights reserved.
+
+"""Pytest configuration parser for test module detection.
+
+This module implements pytest configuration parsing (TDD Section 3.9.2, DD-3):
+- Parse pytest.ini, pyproject.toml, setup.cfg, tox.ini
+- Extract testpaths and python_files patterns
+- Fall back to default patterns if config not found
+- No runtime dependency on pytest (static parsing only)
+
+Design Decision DD-3:
+- Parse pytest configuration files statically
+- Treat conftest.py as test infrastructure
+- Enable accurate test vs source distinction for warning suppression
+
+Related Requirements:
+- DD-3 (Test File Detection)
+- Section 3.9.2 (Test vs Source Module Detection)
+- T-6.1 (test module identification)
+"""
+
+import configparser
+import logging
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+# Python 3.11+ has tomllib built-in, earlier versions need tomli
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    try:
+        import tomli as tomllib
+    except ImportError:
+        tomllib = None  # type: ignore
+
+
+class PytestConfig:
+    """Pytest configuration parser.
+
+    Parses pytest configuration files in order of precedence:
+    1. pytest.ini
+    2. pyproject.toml (section [tool.pytest.ini_options])
+    3. setup.cfg (section [tool:pytest])
+    4. tox.ini (section [pytest])
+
+    Extracts:
+    - testpaths: Directories containing tests
+    - python_files: File patterns for test modules
+
+    Falls back to default patterns if no config found.
+    """
+
+    # Default patterns from TDD Section 3.9.2
+    DEFAULT_TEST_PATHS: List[str] = ["tests"]
+    DEFAULT_PYTHON_FILES: List[str] = ["test_*.py", "*_test.py"]
+    DEFAULT_CONFTEST_PATTERN: str = "**/conftest.py"
+    DEFAULT_TESTS_DIR_PATTERN: str = "**/tests/**/*.py"
+
+    def __init__(self, project_root: Path):
+        """Initialize pytest config parser.
+
+        Args:
+            project_root: Root directory of the project
+        """
+        self.project_root = project_root
+        self.testpaths: List[str] = []
+        self.python_files: List[str] = []
+        self._loaded = False
+
+    def load(self) -> None:
+        """Load pytest configuration from available config files.
+
+        Tries config files in order of precedence. Stops at first valid config.
+        Falls back to defaults if no config found or parsing fails.
+        """
+        if self._loaded:
+            return
+
+        self._loaded = True
+
+        # Try each config file in order of precedence
+        config_loaders = [
+            (self.project_root / "pytest.ini", self._load_pytest_ini),
+            (self.project_root / "pyproject.toml", self._load_pyproject_toml),
+            (self.project_root / "setup.cfg", self._load_setup_cfg),
+            (self.project_root / "tox.ini", self._load_tox_ini),
+        ]
+
+        for config_path, loader_func in config_loaders:
+            if config_path.exists():
+                try:
+                    if loader_func(config_path):
+                        logger.info(f"Loaded pytest config from {config_path}")
+                        return
+                except Exception as e:
+                    logger.warning(f"Failed to parse {config_path}: {e}")
+                    continue
+
+        # No valid config found, use defaults
+        logger.info("No pytest config found, using default patterns")
+        self.testpaths = self.DEFAULT_TEST_PATHS.copy()
+        self.python_files = self.DEFAULT_PYTHON_FILES.copy()
+
+    def _load_pytest_ini(self, config_path: Path) -> bool:
+        """Load configuration from pytest.ini.
+
+        Args:
+            config_path: Path to pytest.ini
+
+        Returns:
+            True if successfully loaded, False otherwise
+        """
+        parser = configparser.ConfigParser()
+        parser.read(config_path, encoding="utf-8")
+
+        if not parser.has_section("pytest"):
+            return False
+
+        return self._extract_config_values(parser, "pytest")
+
+    def _load_pyproject_toml(self, config_path: Path) -> bool:
+        """Load configuration from pyproject.toml.
+
+        Args:
+            config_path: Path to pyproject.toml
+
+        Returns:
+            True if successfully loaded, False otherwise
+        """
+        if tomllib is None:
+            logger.warning(
+                "tomli library not available for Python < 3.11, " "cannot parse pyproject.toml"
+            )
+            return False
+
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+
+        # Look for [tool.pytest.ini_options] section
+        pytest_config = data.get("tool", {}).get("pytest", {}).get("ini_options", {})
+        if not pytest_config:
+            return False
+
+        return self._extract_from_dict(pytest_config)
+
+    def _load_setup_cfg(self, config_path: Path) -> bool:
+        """Load configuration from setup.cfg.
+
+        Args:
+            config_path: Path to setup.cfg
+
+        Returns:
+            True if successfully loaded, False otherwise
+        """
+        parser = configparser.ConfigParser()
+        parser.read(config_path, encoding="utf-8")
+
+        if not parser.has_section("tool:pytest"):
+            return False
+
+        return self._extract_config_values(parser, "tool:pytest")
+
+    def _load_tox_ini(self, config_path: Path) -> bool:
+        """Load configuration from tox.ini.
+
+        Args:
+            config_path: Path to tox.ini
+
+        Returns:
+            True if successfully loaded, False otherwise
+        """
+        parser = configparser.ConfigParser()
+        parser.read(config_path, encoding="utf-8")
+
+        if not parser.has_section("pytest"):
+            return False
+
+        return self._extract_config_values(parser, "pytest")
+
+    def _extract_config_values(self, parser: configparser.ConfigParser, section: str) -> bool:
+        """Extract testpaths and python_files from ConfigParser.
+
+        Args:
+            parser: ConfigParser instance
+            section: Section name to read from
+
+        Returns:
+            True if any values extracted, False otherwise
+        """
+        found_any = False
+
+        if parser.has_option(section, "testpaths"):
+            testpaths_str = parser.get(section, "testpaths")
+            self.testpaths = [p.strip() for p in testpaths_str.split()]
+            found_any = True
+        else:
+            self.testpaths = self.DEFAULT_TEST_PATHS.copy()
+
+        if parser.has_option(section, "python_files"):
+            python_files_str = parser.get(section, "python_files")
+            self.python_files = [p.strip() for p in python_files_str.split()]
+            found_any = True
+        else:
+            self.python_files = self.DEFAULT_PYTHON_FILES.copy()
+
+        return found_any
+
+    def _extract_from_dict(self, config_dict: Dict[str, Any]) -> bool:
+        """Extract testpaths and python_files from dictionary (TOML).
+
+        Args:
+            config_dict: Dictionary containing pytest config
+
+        Returns:
+            True if any values extracted, False otherwise
+        """
+        found_any = False
+
+        if "testpaths" in config_dict:
+            testpaths = config_dict["testpaths"]
+            if isinstance(testpaths, list):
+                self.testpaths = testpaths
+                found_any = True
+            elif isinstance(testpaths, str):
+                self.testpaths = [p.strip() for p in testpaths.split()]
+                found_any = True
+        else:
+            self.testpaths = self.DEFAULT_TEST_PATHS.copy()
+
+        if "python_files" in config_dict:
+            python_files = config_dict["python_files"]
+            if isinstance(python_files, list):
+                self.python_files = python_files
+                found_any = True
+            elif isinstance(python_files, str):
+                self.python_files = [p.strip() for p in python_files.split()]
+                found_any = True
+        else:
+            self.python_files = self.DEFAULT_PYTHON_FILES.copy()
+
+        return found_any
+
+    def get_test_patterns(self) -> List[str]:
+        """Get all test file patterns.
+
+        Combines:
+        - python_files patterns from config (e.g., test_*.py)
+        - testpaths directory patterns (e.g., tests/**/*.py)
+        - conftest.py pattern (always included)
+
+        Returns:
+            List of glob patterns for test files
+        """
+        if not self._loaded:
+            self.load()
+
+        patterns = []
+
+        # Add python_files patterns with ** prefix for any directory
+        for pattern in self.python_files:
+            if not pattern.startswith("**/"):
+                patterns.append(f"**/{pattern}")
+            else:
+                patterns.append(pattern)
+
+        # Add testpaths directory patterns
+        for testpath in self.testpaths:
+            patterns.append(f"{testpath}/**/*.py")
+            patterns.append(f"**/{testpath}/**/*.py")  # Match in subdirectories too
+
+        # Always include conftest.py
+        patterns.append(self.DEFAULT_CONFTEST_PATTERN)
+
+        return patterns
+
+
+def is_test_module(file_path: str, project_root: Optional[str] = None) -> bool:
+    """Check if a file is a test module.
+
+    Uses pytest configuration if available, otherwise falls back to default patterns.
+
+    Implementation follows TDD Section 3.9.2:
+    - Approach 2: Pytest Configuration Parsing (if config available)
+    - Approach 1: Pattern Matching (fallback)
+
+    Args:
+        file_path: Path to file (absolute or relative)
+        project_root: Project root directory (optional, defaults to cwd)
+
+    Returns:
+        True if file is a test module, False otherwise
+    """
+    from fnmatch import fnmatch
+
+    path = Path(file_path)
+    path_str = str(path)
+    path_parts = path.parts
+
+    # Load pytest config if project root provided
+    if project_root:
+        root = Path(project_root)
+        config = PytestConfig(root)
+        config.load()
+        patterns = config.get_test_patterns()
+    else:
+        # Use default patterns
+        patterns = [
+            "**/test_*.py",
+            "**/*_test.py",
+            "**/tests/**/*.py",
+            "**/conftest.py",
+        ]
+
+    # Check if file matches any pattern
+    for pattern in patterns:
+        # Handle **/ prefix patterns (match in any directory)
+        if pattern.startswith("**/"):
+            remaining_pattern = pattern[3:]  # Remove **/
+
+            # Check if it's a directory pattern like tests/**/*.py
+            if "/**/" in remaining_pattern:
+                # Extract directory name before /**/
+                dir_name = remaining_pattern.split("/**/")[0]
+                # Check if this directory appears anywhere in the path
+                if dir_name in path_parts and path.suffix == ".py":
+                    return True
+
+            # Check against filename only
+            if fnmatch(path.name, remaining_pattern):
+                return True
+        else:
+            # Pattern without **/ prefix, check directly
+            if fnmatch(path_str, pattern) or fnmatch(path.name, pattern):
+                return True
+
+    return False
