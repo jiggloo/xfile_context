@@ -140,13 +140,16 @@ class Config:
             # Must be a list
             return isinstance(value, list)
         elif key == "file_specific_suppressions":
-            # Must be a dict with string keys and list values
+            # Must be a dict with string keys and list of string values
             if not isinstance(value, dict):
                 return False
             for filepath, pattern_types in value.items():
                 if not isinstance(filepath, str):
                     return False
                 if not isinstance(pattern_types, list):
+                    return False
+                # Validate that all pattern types are strings
+                if not all(isinstance(pt, str) for pt in pattern_types):
                     return False
             return True
 

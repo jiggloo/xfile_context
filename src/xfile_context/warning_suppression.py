@@ -418,19 +418,27 @@ class WarningSuppressionManager:
     def _get_relative_path(self, filepath: str) -> str:
         """Get relative path from project root.
 
+        Normalizes paths to resolve traversal sequences (.. and .) before
+        computing the relative path. This ensures consistent matching and
+        prevents directory traversal from bypassing suppression rules.
+
         Args:
             filepath: Absolute or relative file path.
 
         Returns:
-            Path relative to project root.
+            Path relative to project root, or original filepath if
+            outside project root or on error.
         """
         try:
             path = Path(filepath)
             if path.is_absolute():
-                return str(path.relative_to(self.project_root))
+                # Normalize path to resolve .. and . components
+                normalized = path.resolve()
+                project_root_resolved = self.project_root.resolve()
+                return str(normalized.relative_to(project_root_resolved))
             return filepath
         except ValueError:
-            # Path is not under project root
+            # Path is not under project root after normalization
             return filepath
 
     def filter_warnings(self, warnings: List[StructuredWarning]) -> List[StructuredWarning]:
