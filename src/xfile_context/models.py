@@ -246,29 +246,39 @@ class RelationshipGraph:
 
         Args:
             filepath: Path to remove relationships for.
+
+        Raises:
+            Exception: If removal operation fails (extremely unlikely at target scale).
         """
-        # Remove from relationships list
-        self._relationships = [
-            rel
-            for rel in self._relationships
-            if rel.source_file != filepath and rel.target_file != filepath
-        ]
+        try:
+            # Remove from relationships list
+            self._relationships = [
+                rel
+                for rel in self._relationships
+                if rel.source_file != filepath and rel.target_file != filepath
+            ]
 
-        # Remove from indices
-        if filepath in self._dependencies:
-            del self._dependencies[filepath]
-        if filepath in self._dependents:
-            del self._dependents[filepath]
+            # Remove from indices
+            if filepath in self._dependencies:
+                del self._dependencies[filepath]
+            if filepath in self._dependents:
+                del self._dependents[filepath]
 
-        # Remove from other files' indices
-        for deps in self._dependencies.values():
-            deps.discard(filepath)
-        for deps in self._dependents.values():
-            deps.discard(filepath)
+            # Remove from other files' indices
+            for deps in self._dependencies.values():
+                deps.discard(filepath)
+            for deps in self._dependents.values():
+                deps.discard(filepath)
 
-        # Remove metadata
-        if filepath in self._file_metadata:
-            del self._file_metadata[filepath]
+            # Remove metadata
+            if filepath in self._file_metadata:
+                del self._file_metadata[filepath]
+        except Exception as e:
+            # If removal fails (extremely unlikely at target scale):
+            # Log error with full context and re-raise
+            # Graph may be in inconsistent state - validation will detect issues
+            logger.error(f"Graph removal failed for {filepath}: {e}")
+            raise
 
     def export_to_dict(self) -> Dict[str, Any]:
         """Export graph to JSON-compatible dict (FR-23, FR-25).
