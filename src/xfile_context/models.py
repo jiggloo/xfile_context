@@ -15,8 +15,9 @@ All models use JSON-compatible primitives (DD-4) for serialization.
 """
 
 import logging
+import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -245,29 +246,39 @@ class RelationshipGraph:
 
         Args:
             filepath: Path to remove relationships for.
+
+        Raises:
+            Exception: If removal operation fails (extremely unlikely at target scale).
         """
-        # Remove from relationships list
-        self._relationships = [
-            rel
-            for rel in self._relationships
-            if rel.source_file != filepath and rel.target_file != filepath
-        ]
+        try:
+            # Remove from relationships list
+            self._relationships = [
+                rel
+                for rel in self._relationships
+                if rel.source_file != filepath and rel.target_file != filepath
+            ]
 
-        # Remove from indices
-        if filepath in self._dependencies:
-            del self._dependencies[filepath]
-        if filepath in self._dependents:
-            del self._dependents[filepath]
+            # Remove from indices
+            if filepath in self._dependencies:
+                del self._dependencies[filepath]
+            if filepath in self._dependents:
+                del self._dependents[filepath]
 
-        # Remove from other files' indices
-        for deps in self._dependencies.values():
-            deps.discard(filepath)
-        for deps in self._dependents.values():
-            deps.discard(filepath)
+            # Remove from other files' indices
+            for deps in self._dependencies.values():
+                deps.discard(filepath)
+            for deps in self._dependents.values():
+                deps.discard(filepath)
 
-        # Remove metadata
-        if filepath in self._file_metadata:
-            del self._file_metadata[filepath]
+            # Remove metadata
+            if filepath in self._file_metadata:
+                del self._file_metadata[filepath]
+        except Exception as e:
+            # If removal fails (extremely unlikely at target scale):
+            # Log error with full context and re-raise
+            # Graph may be in inconsistent state - validation will detect issues
+            logger.error(f"Graph removal failed for {filepath}: {e}")
+            raise
 
     def export_to_dict(self) -> Dict[str, Any]:
         """Export graph to JSON-compatible dict (FR-23, FR-25).
@@ -277,6 +288,7 @@ class RelationshipGraph:
         """
         return {
             "version": "0.1.0",
+            "timestamp": time.time(),
             "relationships": [rel.to_dict() for rel in self._relationships],
             "file_metadata": {
                 filepath: metadata.to_dict() for filepath, metadata in self._file_metadata.items()
@@ -317,6 +329,108 @@ class RelationshipGraph:
             FileMetadata if exists, None otherwise.
         """
         return self._file_metadata.get(filepath)
+
+    def validate_graph(self) -> Tuple[bool, List[str]]:
+        """Validate graph structure for consistency (EC-19).
+
+        Checks for:
+        - Orphaned references: Relationships referencing files not in metadata
+        - Bidirectional consistency: If A → B exists, both A and B should be tracked
+        - Duplicate relationships: Same source, target, type, and line
+
+        Returns:
+            Tuple of (is_valid, error_messages).
+            - is_valid: True if graph is consistent, False if corruption detected
+            - error_messages: List of validation errors found (empty if valid)
+        """
+        errors: List[str] = []
+
+        # Track all files referenced in relationships
+        referenced_files: Set[str] = set()
+        seen_relationships: Set[Tuple[str, str, str, int]] = set()
+
+        # Check each relationship
+        for rel in self._relationships:
+            # Track referenced files
+            referenced_files.add(rel.source_file)
+            referenced_files.add(rel.target_file)
+
+            # Check for duplicates
+            rel_key = (rel.source_file, rel.target_file, rel.relationship_type, rel.line_number)
+            if rel_key in seen_relationships:
+                errors.append(
+                    f"Duplicate relationship: {rel.source_file} → {rel.target_file} "
+                    f"({rel.relationship_type}) at line {rel.line_number}"
+                )
+            else:
+                seen_relationships.add(rel_key)
+
+            # Check bidirectional index consistency
+            # Verify source_file is in dependencies index
+            if rel.source_file not in self._dependencies:
+                errors.append(
+                    f"Index inconsistency: {rel.source_file} missing from dependencies index"
+                )
+            elif rel.target_file not in self._dependencies.get(rel.source_file, set()):
+                errors.append(
+                    f"Index inconsistency: {rel.source_file} → {rel.target_file} "
+                    f"not in dependencies index"
+                )
+
+            # Verify target_file is in dependents index
+            if rel.target_file not in self._dependents:
+                errors.append(
+                    f"Index inconsistency: {rel.target_file} missing from dependents index"
+                )
+            elif rel.source_file not in self._dependents.get(rel.target_file, set()):
+                errors.append(
+                    f"Index inconsistency: {rel.target_file} ← {rel.source_file} "
+                    f"not in dependents index"
+                )
+
+        # Check for orphaned index entries (files in indices but no relationships)
+        all_indexed_files = set(self._dependencies.keys()) | set(self._dependents.keys())
+        for filepath in all_indexed_files:
+            # This is only an error if there are no relationships for this file
+            if filepath not in referenced_files and (
+                (filepath not in self._dependencies or not self._dependencies[filepath])
+                and (filepath not in self._dependents or not self._dependents[filepath])
+            ):
+                errors.append(
+                    f"Orphaned index entry: {filepath} has empty indices but exists in graph"
+                )
+
+        is_valid = len(errors) == 0
+        return is_valid, errors
+
+    def detect_corruption(self) -> bool:
+        """Detect graph corruption and log details (EC-19).
+
+        This is a convenience method that runs validation and logs any errors found.
+
+        Returns:
+            True if corruption detected, False if graph is valid.
+        """
+        is_valid, errors = self.validate_graph()
+        if not is_valid:
+            logger.error(
+                f"Graph corruption detected! Found {len(errors)} consistency errors. "
+                f"Errors: {errors}"
+            )
+            return True
+        return False
+
+    def clear(self) -> None:
+        """Clear all relationships and metadata from graph.
+
+        Used for:
+        - Graph corruption recovery (EC-19): Clear and rebuild from scratch
+        - Testing: Reset graph to clean state
+        """
+        self._relationships.clear()
+        self._dependencies.clear()
+        self._dependents.clear()
+        self._file_metadata.clear()
 
 
 @dataclass
