@@ -6701,6 +6701,27 @@ These gaps were identified during TDD creation itself, before implementation beg
 - **Status**: Resolved
 - **Resolution Date**: 2025-12-02
 
+**G-4: Python Version Requirement Update for MCP SDK Compatibility**
+- **Discovery Date**: 2025-12-02
+- **Discovered During**: Phase 4, Task 4.2 (MCP Server Protocol Layer), Github Issue #25
+- **Description**: The TDD Section 1.1 and TODO-1 specify Python 3.8+ compatibility (NFR-13). However, the official MCP Python SDK (`mcp` package on PyPI) requires Python 3.10+ as of version 1.0.0+. Additionally, Claude Code itself requires Python 3.10+ according to the official documentation. This creates an incompatibility between the TDD requirement and the actual runtime environment.
+- **Root Cause**: Q-3 (MCP Protocol Version and Compatibility) was marked as "Action Required: Verify Claude Code's MCP version before starting Task 1.2" but this verification was not completed before the TDD was finalized. The Python 3.8+ requirement was specified without verifying the actual MCP SDK requirements or Claude Code's Python version requirements.
+- **Impact**:
+  - Cannot use official MCP Python SDK with Python 3.8 (package installation fails)
+  - TDD Section 1.1 constraint is incompatible with deployment environment
+  - TODO-1 (Development Environment Setup) references incorrect Python version
+  - NFR-13 references are affected throughout TDD
+- **Affected Components**: Section 1.1 (Constraints), TODO-1, NFR-13, Q-3, Task 4.2, all references to Python 3.8
+- **Resolution**:
+  - Updated `pyproject.toml` to require Python 3.10+ (`requires-python = ">=3.10"`)
+  - Updated Python version classifiers to 3.10, 3.11, 3.12, 3.13 (removed 3.8, 3.9)
+  - Added MCP SDK dependency: `mcp>=1.0.0,<2.0.0`
+  - Verified Claude Code requires Python 3.10+ through official documentation
+  - Python 3.10+ aligns with: (1) MCP SDK requirements, (2) Claude Code requirements, (3) real-world deployment context
+  - Future: TDD Section 1.1 should be updated to reflect Python 3.10+ requirement instead of Python 3.8+
+- **Status**: Resolved
+- **Resolution Date**: 2025-12-02
+
 ---
 
 ### Resolved Gaps Archive

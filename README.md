@@ -6,7 +6,7 @@ Cross-File Context Links MCP Server
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.10 or higher (required for MCP SDK compatibility)
 
 ### Installation
 
@@ -68,13 +68,122 @@ This project uses GitHub Actions for continuous integration. The following workf
 
 **Comprehensive Tests** (`.github/workflows/comprehensive-tests.yml`):
 - **Triggers**: Runs on pull request creation/updates only
-- **Matrix Strategy**: Tests across Python 3.8, 3.9, 3.10, 3.11, and 3.12 on Ubuntu
+- **Matrix Strategy**: Tests across Python 3.10, 3.11, 3.12, and 3.13 on Ubuntu
 - **Test Scope**: Full unit test suite + integration tests
 - **Timeout**: <5 minutes per environment
 - **Purpose**: Validates compatibility across all supported Python versions
 - **Status**: Required check for PR merge
 
 These workflows ensure code quality and compatibility before merging changes to the main branch.
+
+## Usage
+
+### Running the MCP Server
+
+The Cross-File Context Links MCP Server provides automatic cross-file context injection for Python codebases. It integrates with Claude Code via the Model Context Protocol (MCP).
+
+#### Standalone Mode
+
+Run the MCP server directly:
+
+```bash
+python -m xfile_context.mcp_server
+```
+
+The server runs in stdio mode by default, which is compatible with Claude Code.
+
+#### Programmatic Usage
+
+Use the server in Python code:
+
+```python
+from xfile_context import CrossFileContextMCPServer
+
+# Initialize with default configuration
+server = CrossFileContextMCPServer()
+
+# Run the server (stdio transport for Claude Code)
+server.run(transport="stdio")
+```
+
+### MCP Tools
+
+The server exposes two MCP tools:
+
+#### 1. `read_with_context`
+
+Reads a Python file with automatic cross-file context injection.
+
+**Parameters:**
+- `file_path` (str): Absolute or relative path to the Python file
+
+**Returns:**
+- `file_path`: The path that was read
+- `content`: File content with injected context (formatted per TDD Section 3.8.3)
+- `warnings`: List of any warnings (empty if none)
+
+**Example:**
+```python
+# When called via MCP:
+# Tool: read_with_context
+# Args: {"file_path": "src/module.py"}
+#
+# Response includes:
+# {
+#   "file_path": "src/module.py",
+#   "content": "[Cross-File Context]\n...\n---\n<file content>",
+#   "warnings": []
+# }
+```
+
+#### 2. `get_relationship_graph`
+
+Exports the complete relationship graph for the codebase.
+
+**Returns:**
+- `nodes`: List of file nodes
+- `relationships`: List of relationships between files
+- `metadata`: Graph metadata (timestamp, counts)
+
+**Example:**
+```python
+# When called via MCP:
+# Tool: get_relationship_graph
+# Args: {}
+#
+# Response includes:
+# {
+#   "nodes": [...],
+#   "relationships": [...],
+#   "metadata": {...}
+# }
+```
+
+### Configuration
+
+Create a `.cross_file_context_links.yml` file in your project root to customize behavior:
+
+```yaml
+# Cache configuration
+cache_expiry_minutes: 10
+cache_size_limit_kb: 50
+
+# Context injection
+context_token_limit: 500
+enable_context_injection: true
+
+# Warnings
+warn_on_wildcards: false
+suppress_warnings: []
+function_usage_warning_threshold: 3
+
+# Metrics and logging
+enable_injection_logging: true
+enable_warning_logging: true
+metrics_anonymize_paths: false
+```
+
+See TDD Section 3.10.4 for full configuration reference.
 
 ### Branch Protection
 
