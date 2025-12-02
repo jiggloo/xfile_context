@@ -18,6 +18,14 @@ Performance Characteristics (TDD Section 3.6.2):
 - No debouncing: Timestamp updates are cheap, last write wins
 - No batching: Bulk operations handled by fast timestamp updates
 - Thread-safe: GIL ensures atomicity for dict operations
+
+Known Limitations:
+- Memory: file_event_timestamps dict grows unbounded (no cleanup of deleted files)
+  Suitable for CLI/short-lived processes; consider cleanup for long-running daemons
+- Symlinks: Symbolic links are followed by watchdog; no validation that resolved
+  paths stay within project_root
+- Error handling: No automatic restart/fallback on watcher failure (TDD 3.6.2
+  requirement deferred to future enhancement)
 """
 
 import fnmatch
@@ -81,6 +89,21 @@ class FileWatcher:
         "*.pfx",
         "*_key",
         "*_secret",
+        "*.jks",  # Java keystores
+        "*.keystore",
+        "*.truststore",
+        "*.cer",
+        "*.crt",
+        "id_rsa",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519",  # SSH private keys
+        "secrets.yaml",
+        "secrets.yml",
+        ".npmrc",
+        ".pypirc",  # Package manager credentials
+        "gcloud.json",
+        ".aws",  # AWS credentials directory
     }
 
     # Supported file extensions (extensible for future languages)
@@ -122,7 +145,11 @@ class FileWatcher:
         logger.debug(f"Loaded {len(self._gitignore_patterns)} .gitignore patterns")
 
     def _load_gitignore(self) -> Set[str]:
-        """Load and parse .gitignore patterns.
+        """Load and parse .gitignore patterns with validation.
+
+        Pattern validation:
+        - Maximum length: 1000 characters (prevents pathological patterns)
+        - Empty lines and comments are skipped
 
         Returns:
             Set of gitignore patterns (NFR-7)
@@ -135,20 +162,72 @@ class FileWatcher:
 
         try:
             with open(self.gitignore_path, encoding="utf-8") as f:
-                for line in f:
+                for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     # Skip empty lines and comments
-                    if line and not line.startswith("#"):
-                        patterns.add(line)
+                    if not line or line.startswith("#"):
+                        continue
+
+                    # Validate pattern length (security: prevent pathological patterns)
+                    if len(line) > 1000:
+                        logger.warning(
+                            f".gitignore line {line_num}: Pattern too long (>1000 chars), skipping"
+                        )
+                        continue
+
+                    patterns.add(line)
 
             logger.debug(f"Loaded {len(patterns)} patterns from .gitignore")
-        except Exception as e:
+        except (FileNotFoundError, PermissionError) as e:
             logger.warning(f"Failed to load .gitignore: {e}")
+        except UnicodeDecodeError as e:
+            logger.error(f"Failed to decode .gitignore (encoding error): {e}")
+        except OSError as e:
+            logger.error(f"Failed to read .gitignore: {e}")
 
         return patterns
 
+    def _matches_pattern(
+        self, path: Path, rel_path_str: str, pattern: str, check_parts: bool = True
+    ) -> bool:
+        """Check if path matches a single pattern.
+
+        Args:
+            path: Path object to check
+            rel_path_str: String representation of relative path
+            pattern: Pattern to match against
+            check_parts: Whether to check individual path components
+
+        Returns:
+            True if path matches pattern
+        """
+        # Check if pattern is a wildcard pattern
+        if pattern.startswith("*") or pattern.endswith("*"):
+            # Check full relative path and filename
+            if fnmatch.fnmatch(rel_path_str, pattern) or fnmatch.fnmatch(path.name, pattern):
+                return True
+            # Check if any part of the path matches the wildcard pattern
+            if check_parts:
+                for part in path.parts:
+                    if fnmatch.fnmatch(part, pattern):
+                        return True
+        else:
+            # Exact match - check filename or path components
+            if path.name == pattern:
+                return True
+            if check_parts:
+                for part in path.parts:
+                    if part == pattern:
+                        return True
+        return False
+
     def should_ignore(self, file_path: str) -> bool:
         """Check if file should be ignored based on patterns.
+
+        Pattern matching strategy:
+        - ALWAYS_IGNORED & SENSITIVE_PATTERNS: Check path parts for directory/file matches
+        - .gitignore patterns: Check relative path and filename (standard gitignore behavior)
+        - User patterns: Check relative path and filename (standard glob behavior)
 
         Args:
             file_path: Absolute or relative file path
@@ -169,32 +248,21 @@ class FileWatcher:
 
         # Always ignored directories and patterns (NFR-8)
         for pattern in self.ALWAYS_IGNORED:
-            if pattern.startswith("*") or pattern.endswith("*"):
-                # Check full relative path and filename
-                if fnmatch.fnmatch(rel_path_str, pattern) or fnmatch.fnmatch(path.name, pattern):
-                    return True
-                # Check if any part of the path matches the wildcard pattern
-                for part in path.parts:
-                    if fnmatch.fnmatch(part, pattern):
-                        return True
-            else:
-                # Check if any part of the path matches
-                for part in path.parts:
-                    if part == pattern:
-                        return True
-
-        # Sensitive files
-        for pattern in self.SENSITIVE_PATTERNS:
-            if fnmatch.fnmatch(path.name, pattern):
-                logger.debug(f"Ignoring sensitive file: {path.name}")
+            if self._matches_pattern(path, rel_path_str, pattern, check_parts=True):
                 return True
 
-        # .gitignore patterns (NFR-7)
+        # Sensitive files (check path parts for sensitive directories/files)
+        for pattern in self.SENSITIVE_PATTERNS:
+            if self._matches_pattern(path, rel_path_str, pattern, check_parts=True):
+                logger.debug(f"Ignoring sensitive file/directory: {path.name}")
+                return True
+
+        # .gitignore patterns (NFR-7) - standard gitignore matching
         for pattern in self._gitignore_patterns:
             if fnmatch.fnmatch(rel_path_str, pattern) or fnmatch.fnmatch(path.name, pattern):
                 return True
 
-        # User-configured patterns
+        # User-configured patterns - standard glob matching
         for pattern in self.user_ignore_patterns:
             if fnmatch.fnmatch(rel_path_str, pattern) or fnmatch.fnmatch(path.name, pattern):
                 return True
@@ -228,19 +296,14 @@ class FileWatcher:
     def update_timestamp(self, file_path: str) -> None:
         """Update timestamp for file event.
 
-        Thread-safe: GIL ensures atomicity for dict write.
-
         Args:
             file_path: Absolute file path
         """
-        # Thread-safe: GIL ensures atomicity for dict operations
         self.file_event_timestamps[file_path] = time.time()
         logger.debug(f"Updated timestamp for {file_path}")
 
     def get_timestamp(self, file_path: str) -> Optional[float]:
         """Get last event timestamp for file.
-
-        Thread-safe: GIL ensures atomicity for dict read.
 
         Args:
             file_path: Absolute file path
@@ -248,7 +311,6 @@ class FileWatcher:
         Returns:
             Last event timestamp or None if no events recorded
         """
-        # Thread-safe: GIL ensures atomicity for dict operations
         return self.file_event_timestamps.get(file_path)
 
     def start(self) -> None:
