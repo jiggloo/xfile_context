@@ -26,9 +26,14 @@ from .config import Config
 from .detectors import (
     ClassInheritanceDetector,
     ConditionalImportDetector,
+    DecoratorDetector,
     DetectorRegistry,
+    DynamicDispatchDetector,
+    ExecEvalDetector,
     FunctionCallDetector,
     ImportDetector,
+    MetaclassDetector,
+    MonkeyPatchingDetector,
     WildcardImportDetector,
 )
 from .file_watcher import FileWatcher
@@ -168,6 +173,15 @@ class CrossFileContextService:
         self._detector_registry.register(WildcardImportDetector())
         self._detector_registry.register(FunctionCallDetector())
         self._detector_registry.register(ClassInheritanceDetector())
+
+        # Register dynamic pattern detectors (TDD Section 3.5.4, Section 3.9.1)
+        # These detect patterns that cannot be statically analyzed (FR-42 fail-safe)
+        project_root_str = str(self._project_root)
+        self._detector_registry.register(DynamicDispatchDetector(project_root_str))
+        self._detector_registry.register(MonkeyPatchingDetector(project_root_str))
+        self._detector_registry.register(ExecEvalDetector(project_root_str))
+        self._detector_registry.register(DecoratorDetector(project_root_str))
+        self._detector_registry.register(MetaclassDetector(project_root_str))
 
         # Initialize analyzer
         self._analyzer = (
