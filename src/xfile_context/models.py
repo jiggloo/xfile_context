@@ -123,20 +123,29 @@ class FileMetadata:
     is_unparseable: bool  # Syntax error prevented analysis (EC-18)
     # Note: has_circular_deps removed (cycle detection deferred to v0.1.1+, see Section 3.5.5)
 
+    # File deletion tracking (TDD Section 3.6.4, EC-14)
+    deleted: bool = False  # True if file has been deleted
+    deletion_time: Optional[float] = None  # Unix timestamp of deletion
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to JSON-compatible dict.
 
         Returns:
             Dictionary with all metadata fields.
         """
-        return {
+        result = {
             "filepath": self.filepath,
             "last_analyzed": self.last_analyzed,
             "relationship_count": self.relationship_count,
             "has_dynamic_patterns": self.has_dynamic_patterns,
             "dynamic_pattern_types": self.dynamic_pattern_types,
             "is_unparseable": self.is_unparseable,
+            "deleted": self.deleted,
         }
+        # Only include deletion_time if it's set
+        if self.deletion_time is not None:
+            result["deletion_time"] = self.deletion_time
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "FileMetadata":
@@ -158,6 +167,8 @@ class FileMetadata:
             has_dynamic_patterns=data["has_dynamic_patterns"],
             dynamic_pattern_types=data["dynamic_pattern_types"],
             is_unparseable=data["is_unparseable"],
+            deleted=data.get("deleted", False),  # Default False for backward compatibility
+            deletion_time=data.get("deletion_time"),  # Default None
         )
 
 
