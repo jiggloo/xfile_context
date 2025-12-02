@@ -534,6 +534,335 @@ class TestRelationshipGraph:
         assert export["statistics"]["total_files"] == 2
         assert export["statistics"]["files_with_dynamic_patterns"] == 1
 
+    def test_export_includes_timestamp(self):
+        """Test that export includes a timestamp field (TDD 3.3.2)."""
+        import time
+
+        graph = RelationshipGraph()
+        rel = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+        graph.add_relationship(rel)
+
+        before_time = time.time()
+        export = graph.export_to_dict()
+        after_time = time.time()
+
+        # Check timestamp exists and is recent
+        assert "timestamp" in export
+        assert isinstance(export["timestamp"], float)
+        assert before_time <= export["timestamp"] <= after_time
+
+    def test_validate_graph_valid(self):
+        """Test validation passes for a correctly structured graph (EC-19)."""
+        graph = RelationshipGraph()
+
+        rel1 = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+        rel2 = Relationship(
+            source_file="src/handlers.py",
+            target_file="src/utils.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+        )
+
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+
+        is_valid, errors = graph.validate_graph()
+
+        assert is_valid is True
+        assert len(errors) == 0
+
+    def test_validate_graph_detects_duplicates(self):
+        """Test validation detects duplicate relationships (EC-19)."""
+        graph = RelationshipGraph()
+
+        rel1 = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+        rel2 = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+
+        is_valid, errors = graph.validate_graph()
+
+        assert is_valid is False
+        assert len(errors) > 0
+        assert any("Duplicate relationship" in error for error in errors)
+
+    def test_validate_graph_detects_index_inconsistency(self):
+        """Test validation detects bidirectional index inconsistencies (EC-19)."""
+        graph = RelationshipGraph()
+
+        rel = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+
+        graph.add_relationship(rel)
+
+        # Manually corrupt the dependencies index
+        graph._dependencies["src/bot.py"].remove("src/retry.py")
+
+        is_valid, errors = graph.validate_graph()
+
+        assert is_valid is False
+        assert len(errors) > 0
+        assert any("Index inconsistency" in error for error in errors)
+
+    def test_validate_graph_detects_missing_index(self):
+        """Test validation detects missing index entries (EC-19)."""
+        graph = RelationshipGraph()
+
+        rel = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+
+        graph.add_relationship(rel)
+
+        # Manually corrupt by removing an index entirely
+        del graph._dependents["src/retry.py"]
+
+        is_valid, errors = graph.validate_graph()
+
+        assert is_valid is False
+        assert len(errors) > 0
+        assert any("missing from dependents index" in error for error in errors)
+
+    def test_detect_corruption_returns_false_when_valid(self):
+        """Test detect_corruption returns False for valid graph (EC-19)."""
+        graph = RelationshipGraph()
+
+        rel = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+
+        graph.add_relationship(rel)
+
+        is_corrupted = graph.detect_corruption()
+
+        assert is_corrupted is False
+
+    def test_detect_corruption_returns_true_when_invalid(self):
+        """Test detect_corruption returns True for corrupted graph (EC-19)."""
+        graph = RelationshipGraph()
+
+        rel1 = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+        rel2 = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+
+        is_corrupted = graph.detect_corruption()
+
+        assert is_corrupted is True
+
+    def test_clear_graph(self):
+        """Test clearing graph removes all data (EC-19 recovery)."""
+        graph = RelationshipGraph()
+
+        # Add multiple relationships and metadata
+        rel1 = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+        rel2 = Relationship(
+            source_file="src/handlers.py",
+            target_file="src/utils.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+        )
+
+        metadata = FileMetadata(
+            filepath="src/bot.py",
+            last_analyzed=1700000000.0,
+            relationship_count=1,
+            has_dynamic_patterns=False,
+            dynamic_pattern_types=[],
+            is_unparseable=False,
+        )
+
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+        graph.set_file_metadata("src/bot.py", metadata)
+
+        # Clear everything
+        graph.clear()
+
+        # Verify all data structures are empty
+        assert len(graph.get_all_relationships()) == 0
+        assert len(graph._dependencies) == 0
+        assert len(graph._dependents) == 0
+        assert len(graph._file_metadata) == 0
+
+    def test_atomic_updates(self):
+        """Test that relationship updates are atomic (T-4.1)."""
+        graph = RelationshipGraph()
+
+        rel = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+
+        graph.add_relationship(rel)
+
+        # After add, all indices should be updated
+        assert len(graph.get_all_relationships()) == 1
+        assert "src/retry.py" in graph._dependencies["src/bot.py"]
+        assert "src/bot.py" in graph._dependents["src/retry.py"]
+
+        # Validation should pass (no partial state)
+        is_valid, _ = graph.validate_graph()
+        assert is_valid is True
+
+    def test_bidirectional_query_correctness(self):
+        """Test bidirectional queries work correctly (T-4.2)."""
+        graph = RelationshipGraph()
+
+        # Create a graph: bot.py → retry.py, handlers.py → retry.py
+        rel1 = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+        rel2 = Relationship(
+            source_file="src/handlers.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+        )
+
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+
+        # Query dependencies of bot.py
+        bot_deps = graph.get_dependencies("src/bot.py")
+        assert len(bot_deps) == 1
+        assert bot_deps[0].target_file == "src/retry.py"
+
+        # Query dependents of retry.py
+        retry_dependents = graph.get_dependents("src/retry.py")
+        assert len(retry_dependents) == 2
+        source_files = {rel.source_file for rel in retry_dependents}
+        assert source_files == {"src/bot.py", "src/handlers.py"}
+
+    def test_get_all_relationships(self):
+        """Test get_all_relationships returns complete graph export (T-4.3)."""
+        graph = RelationshipGraph()
+
+        rel1 = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+        rel2 = Relationship(
+            source_file="src/handlers.py",
+            target_file="src/utils.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+        )
+        rel3 = Relationship(
+            source_file="src/bot.py",
+            target_file="src/utils.py",
+            relationship_type=RelationshipType.FUNCTION_CALL,
+            line_number=20,
+        )
+
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+        graph.add_relationship(rel3)
+
+        all_rels = graph.get_all_relationships()
+
+        assert len(all_rels) == 3
+        # Verify we got all relationships
+        source_target_pairs = {(r.source_file, r.target_file) for r in all_rels}
+        assert source_target_pairs == {
+            ("src/bot.py", "src/retry.py"),
+            ("src/handlers.py", "src/utils.py"),
+            ("src/bot.py", "src/utils.py"),
+        }
+
+    def test_query_operations_api(self):
+        """Test query operations API works correctly (T-4.4)."""
+        graph = RelationshipGraph()
+
+        # Build a simple graph
+        rel1 = Relationship(
+            source_file="src/bot.py",
+            target_file="src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+        )
+        rel2 = Relationship(
+            source_file="src/bot.py",
+            target_file="src/utils.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=6,
+        )
+
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+
+        # Test get_dependencies
+        deps = graph.get_dependencies("src/bot.py")
+        assert len(deps) == 2
+        assert all(rel.source_file == "src/bot.py" for rel in deps)
+
+        # Test get_dependencies for file with no dependencies
+        no_deps = graph.get_dependencies("src/retry.py")
+        assert len(no_deps) == 0
+
+        # Test get_dependents
+        dependents = graph.get_dependents("src/retry.py")
+        assert len(dependents) == 1
+        assert dependents[0].source_file == "src/bot.py"
+
+        # Test get_all_relationships
+        all_rels = graph.get_all_relationships()
+        assert len(all_rels) == 2
+
 
 class TestCacheEntry:
     """Tests for CacheEntry dataclass."""
