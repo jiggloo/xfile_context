@@ -575,6 +575,306 @@ class TestServiceSecurityValidation:
         service.shutdown()
 
 
+class TestTokenCounting:
+    """Tests for token counting functionality (TDD Section 3.8.4)."""
+
+    def test_count_tokens_basic(self):
+        """Test basic token counting."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            # Simple text
+            token_count = service._count_tokens("Hello, world!")
+            assert token_count > 0
+            assert isinstance(token_count, int)
+
+            service.shutdown()
+
+    def test_count_tokens_code(self):
+        """Test token counting for Python code."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            code = "def hello():\n    print('Hello, world!')"
+            token_count = service._count_tokens(code)
+
+            # Code typically has more tokens due to syntax
+            # Note: Falls back to word-based approximation if tiktoken unavailable
+            assert token_count >= 5
+
+            service.shutdown()
+
+    def test_count_tokens_empty(self):
+        """Test token counting for empty string."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            token_count = service._count_tokens("")
+            assert token_count == 0
+
+            service.shutdown()
+
+
+class TestHighUsageFunctionDetection:
+    """Tests for high-usage function detection (FR-19, FR-20)."""
+
+    def test_get_symbol_usage_count_no_usages(self):
+        """Test counting usages when symbol has no dependents."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            count = service._get_symbol_usage_count("/path/utils.py", "helper")
+            assert count == 0
+
+            service.shutdown()
+
+    def test_get_symbol_usage_count_single_usage(self):
+        """Test counting usages when symbol is used by one file."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            # main.py uses helper from utils.py
+            rel = Relationship(
+                source_file=str(Path(tmpdir) / "main.py"),
+                target_file=str(Path(tmpdir) / "utils.py"),
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="helper",
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            count = service._get_symbol_usage_count(str(Path(tmpdir) / "utils.py"), "helper")
+            assert count == 1
+
+            service.shutdown()
+
+    def test_get_symbol_usage_count_multiple_usages(self):
+        """Test counting usages when symbol is used by multiple files."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            # Three files all use helper from utils.py
+            for i in range(3):
+                rel = Relationship(
+                    source_file=str(Path(tmpdir) / f"file{i}.py"),
+                    target_file=str(Path(tmpdir) / "utils.py"),
+                    relationship_type=RelationshipType.IMPORT,
+                    line_number=1,
+                    target_symbol="helper",
+                )
+                graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            count = service._get_symbol_usage_count(str(Path(tmpdir) / "utils.py"), "helper")
+            assert count == 3
+
+            service.shutdown()
+
+    def test_get_high_usage_symbols_empty(self):
+        """Test high usage detection with no dependencies."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            high_usage = service._get_high_usage_symbols([])
+            assert high_usage == {}
+
+            service.shutdown()
+
+    def test_get_high_usage_symbols_below_threshold(self):
+        """Test high usage detection when usage is below threshold."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            # Only 2 files use helper (threshold is 3)
+            for i in range(2):
+                rel = Relationship(
+                    source_file=str(Path(tmpdir) / f"file{i}.py"),
+                    target_file=str(Path(tmpdir) / "utils.py"),
+                    relationship_type=RelationshipType.IMPORT,
+                    line_number=1,
+                    target_symbol="helper",
+                    target_line=5,
+                )
+                graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Get dependencies from one of the files
+            deps = graph.get_dependencies(str(Path(tmpdir) / "file0.py"))
+            high_usage = service._get_high_usage_symbols(deps)
+
+            # Should be empty since usage count (2) < threshold (3)
+            assert high_usage == {}
+
+            service.shutdown()
+
+    def test_get_high_usage_symbols_at_threshold(self):
+        """Test high usage detection when usage is at threshold."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # 3 files use helper (exactly at threshold)
+            for i in range(3):
+                rel = Relationship(
+                    source_file=str(Path(tmpdir) / f"file{i}.py"),
+                    target_file=utils_path,
+                    relationship_type=RelationshipType.IMPORT,
+                    line_number=1,
+                    target_symbol="helper",
+                    target_line=5,
+                )
+                graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Get dependencies from one of the files
+            deps = graph.get_dependencies(str(Path(tmpdir) / "file0.py"))
+            high_usage = service._get_high_usage_symbols(deps)
+
+            # Should contain the symbol
+            assert (utils_path, "helper") in high_usage
+            assert high_usage[(utils_path, "helper")] == 3
+
+            service.shutdown()
+
+    def test_high_usage_warning_emitted(self):
+        """Test that high-usage warning is emitted in context."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            utils_path = str(Path(tmpdir) / "utils.py")
+            main_path = str(Path(tmpdir) / "main.py")
+
+            # 4 files use helper (above threshold)
+            for i in range(4):
+                source = main_path if i == 0 else str(Path(tmpdir) / f"other{i}.py")
+                rel = Relationship(
+                    source_file=source,
+                    target_file=utils_path,
+                    relationship_type=RelationshipType.IMPORT,
+                    line_number=1,
+                    target_symbol="helper",
+                    target_line=5,
+                )
+                graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create the files
+            Path(utils_path).write_text(
+                "# Line 1\n# Line 2\n# Line 3\n# Line 4\n" "def helper():\n    pass\n"
+            )
+            Path(main_path).write_text("from utils import helper\n")
+
+            result = service.read_file_with_context(main_path)
+
+            # Should have high-usage warning
+            assert any("helper()" in w and "4 files" in w for w in result.warnings)
+
+            service.shutdown()
+
+
+class TestDependencyPrioritization:
+    """Tests for dependency prioritization (TDD Section 3.8.2)."""
+
+    def test_prioritize_by_relationship_type(self):
+        """Test that IMPORT has higher priority than FUNCTION_CALL."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            # Add function call relationship
+            rel_call = Relationship(
+                source_file=str(Path(tmpdir) / "main.py"),
+                target_file=str(Path(tmpdir) / "utils.py"),
+                relationship_type=RelationshipType.FUNCTION_CALL,
+                line_number=10,
+                target_symbol="helper",
+            )
+
+            # Add import relationship
+            rel_import = Relationship(
+                source_file=str(Path(tmpdir) / "main.py"),
+                target_file=str(Path(tmpdir) / "other.py"),
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="other_func",
+            )
+
+            graph.add_relationship(rel_call)
+            graph.add_relationship(rel_import)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            deps = [rel_call, rel_import]
+            prioritized = service._prioritize_dependencies(deps)
+
+            # Import should come before function call
+            assert prioritized[0].relationship_type == RelationshipType.IMPORT
+
+            service.shutdown()
+
+    def test_prioritize_high_usage_functions(self):
+        """Test that high-usage functions get higher priority."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            utils_path = str(Path(tmpdir) / "utils.py")
+            main_path = str(Path(tmpdir) / "main.py")
+
+            # helper is used by 4 files (high usage)
+            for i in range(4):
+                source = main_path if i == 0 else str(Path(tmpdir) / f"other{i}.py")
+                rel = Relationship(
+                    source_file=source,
+                    target_file=utils_path,
+                    relationship_type=RelationshipType.IMPORT,
+                    line_number=1,
+                    target_symbol="helper",
+                    target_line=5,
+                )
+                graph.add_relationship(rel)
+
+            # another_func is only used by main.py (low usage)
+            rel_low = Relationship(
+                source_file=main_path,
+                target_file=str(Path(tmpdir) / "another.py"),
+                relationship_type=RelationshipType.IMPORT,
+                line_number=2,
+                target_symbol="another_func",
+                target_line=10,
+            )
+            graph.add_relationship(rel_low)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            deps = graph.get_dependencies(main_path)
+            prioritized = service._prioritize_dependencies(deps)
+
+            # High usage function should come first
+            # (Both are IMPORT type, so high-usage is the tiebreaker)
+            assert prioritized[0].target_symbol == "helper"
+
+            service.shutdown()
+
+
 class TestCrossFileContextServiceIntegration:
     """Integration tests for the full workflow."""
 
