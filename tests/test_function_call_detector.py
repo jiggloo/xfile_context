@@ -527,3 +527,61 @@ def main():
         assert rel.target_symbol == "utility"
         # Cannot resolve from wildcard import in v0.1.0
         assert rel.target_file == "<unresolved:utility>"
+
+    def test_detector_reuse_across_files(self, tmp_path):
+        """Test that detector instance can be safely reused across multiple files.
+
+        This tests the production scenario where DetectorRegistry registers a single
+        detector instance and reuses it for all files in the project. The detector
+        must properly invalidate its cache when switching to a different file.
+        """
+        # Create file1 with helper function definition
+        file1 = tmp_path / "file1.py"
+        file1.write_text(
+            """
+def helper():
+    pass
+
+def main():
+    helper()  # Should resolve to file1
+"""
+        )
+
+        # Create file2 that calls helper() but doesn't define it
+        file2 = tmp_path / "file2.py"
+        file2.write_text(
+            """
+def main():
+    helper()  # Should be unresolved, NOT resolved to file1 or file2
+"""
+        )
+
+        # Use same detector instance for both files (production pattern)
+        detector = FunctionCallDetector()
+
+        # Analyze file1
+        tree1 = ast.parse(file1.read_text())
+        file1_rels = []
+        for node in ast.walk(tree1):
+            rels = detector.detect(node, str(file1), tree1)
+            file1_rels.extend(rels)
+
+        # File1 should resolve helper() to itself
+        file1_helper = [r for r in file1_rels if r.target_symbol == "helper"][0]
+        assert file1_helper.target_file == str(file1)
+
+        # Analyze file2 with SAME detector instance
+        tree2 = ast.parse(file2.read_text())
+        file2_rels = []
+        for node in ast.walk(tree2):
+            rels = detector.detect(node, str(file2), tree2)
+            file2_rels.extend(rels)
+
+        # File2 should mark helper() as unresolved (not defined in file2, not imported)
+        file2_helper = [r for r in file2_rels if r.target_symbol == "helper"][0]
+        assert file2_helper.target_file == "<unresolved:helper>", (
+            f"Cache pollution detected: helper() in file2 resolved to "
+            f"{file2_helper.target_file} instead of <unresolved:helper>. "
+            f"This indicates the detector's cache was not properly invalidated "
+            f"when switching from file1 to file2."
+        )

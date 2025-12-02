@@ -67,13 +67,15 @@ class FunctionCallDetector(RelationshipDetector):
     def __init__(self) -> None:
         """Initialize the detector.
 
-        Note: Detector is stateless per instance, but we cache some
-        analysis results during a single detect() call.
+        Note: Detector instances are reused across multiple files (per DetectorRegistry design).
+        Caches are built once per file and invalidated when analyzing a different file.
         """
-        # Cache for local function definitions (populated per file analysis)
+        # Cache for local function definitions (per-file cache)
         self._local_functions: Set[str] = set()
-        # Cache for import mappings (populated per file analysis)
+        # Cache for import mappings (per-file cache)
         self._import_map: Dict[str, str] = {}
+        # Track which file the cache belongs to (for cache invalidation)
+        self._cached_filepath: Optional[str] = None
 
     def detect(
         self,
@@ -95,10 +97,13 @@ class FunctionCallDetector(RelationshipDetector):
 
         # Handle direct function calls (ast.Call nodes)
         if isinstance(node, ast.Call):
-            # Build caches if this is the first call for this file
-            # Note: We rely on the fact that the same detector instance is used
-            # for all nodes in a file during a single analysis pass
-            if not self._local_functions and not self._import_map:
+            # Build caches if analyzing a new file (invalidate cache on file change)
+            # This prevents cache pollution when the same detector instance
+            # is reused across multiple files (DetectorRegistry pattern)
+            if self._cached_filepath != filepath:
+                self._cached_filepath = filepath
+                self._local_functions.clear()
+                self._import_map.clear()
                 self._build_local_function_cache(module_ast)
 
             # Only handle simple patterns in v0.1.0
