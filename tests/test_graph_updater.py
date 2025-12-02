@@ -438,3 +438,43 @@ class TestPathValidation:
         # Should be accepted
         result = updater.update_on_create(str(sub_file))
         assert result is True
+
+    def test_reject_null_byte_injection(self, updater, temp_project_dir):
+        """Test that null byte injection attacks are blocked."""
+        # Attempt null byte injection (path validation DoS attack)
+        null_byte_path = str(temp_project_dir / "file.py") + "\x00/etc/passwd"
+
+        # Should be rejected without crashing
+        assert updater.update_on_modify(null_byte_path) is False
+        assert updater.update_on_delete(null_byte_path) is False
+        assert updater.update_on_create(null_byte_path) is False
+
+    def test_symlink_within_project_root(self, updater, temp_project_dir):
+        """Test that symlinks within project root are accepted."""
+        # Create a file and symlink to it within project
+        real_file = temp_project_dir / "real.py"
+        real_file.write_text("x = 1\n")
+
+        symlink_file = temp_project_dir / "link.py"
+        symlink_file.symlink_to(real_file)
+
+        # Symlink within project should be accepted
+        result = updater.update_on_modify(str(symlink_file))
+        assert result is True
+
+    def test_symlink_outside_project_root(self, updater, temp_project_dir):
+        """Test that symlinks pointing outside project root are rejected."""
+        # Create symlink pointing to /etc/passwd
+        symlink_file = temp_project_dir / "malicious_link.py"
+        try:
+            symlink_file.symlink_to("/etc/passwd")
+        except (OSError, PermissionError):
+            # Some systems don't allow symlinking to /etc/passwd
+            # Skip this test in that case
+            import pytest
+
+            pytest.skip("Cannot create symlink to /etc/passwd on this system")
+
+        # Symlink pointing outside project should be rejected
+        result = updater.update_on_modify(str(symlink_file))
+        assert result is False

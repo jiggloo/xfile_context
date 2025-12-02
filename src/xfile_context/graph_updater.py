@@ -98,7 +98,7 @@ class GraphUpdater:
             except ValueError:
                 # path is not relative to project_root
                 return False
-        except OSError as e:
+        except (OSError, ValueError) as e:
             logger.error(f"Invalid filepath during validation: {filepath}: {e}")
             return False
 
