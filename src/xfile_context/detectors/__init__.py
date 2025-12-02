@@ -9,11 +9,13 @@ relationship detection in Abstract Syntax Trees.
 Components:
 - RelationshipDetector: Abstract base class for detector plugins
 - DetectorRegistry: Priority-based registry for detector plugins
+- ImportDetector: Detector for import relationships
 
 See TDD Section 3.4.4 for detailed specifications.
 """
 
 from .base import RelationshipDetector
+from .import_detector import ImportDetector
 from .registry import DetectorRegistry
 
-__all__ = ["RelationshipDetector", "DetectorRegistry"]
+__all__ = ["RelationshipDetector", "DetectorRegistry", "ImportDetector"]
