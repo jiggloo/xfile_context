@@ -18,7 +18,7 @@ from .warning_formatter import StructuredWarning, WarningEmitter, WarningFormatt
 from .warning_logger import WarningLogger, WarningStatistics, read_warnings_from_log
 from .warning_suppression import WarningSuppressionManager
 
-__version__ = "0.0.64"
+__version__ = "0.0.71"
 
 __all__ = [
     "RelationshipStore",

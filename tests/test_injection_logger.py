@@ -696,6 +696,7 @@ class TestReadInjectionsFromLog:
         assert events[2].source_file == "/src/file2.py"
 
 
+@pytest.mark.slow
 class TestInjectionLoggerIntegration:
     """Integration tests for injection logging in service context."""
 

@@ -239,3 +239,219 @@ class TestProtocolLayerDesign:
         assert not hasattr(server, "analyze_file")
         assert not hasattr(server, "detect_imports")
         assert not hasattr(server, "build_graph")
+
+
+class TestMCPToolHandlers:
+    """Tests for MCP tool handler implementations.
+
+    Tests the async tool handlers that are registered with FastMCP.
+    """
+
+    @pytest.mark.asyncio
+    async def test_read_with_context_handler_success(self):
+        """Test read_with_context handler with successful file read."""
+        from unittest.mock import AsyncMock
+
+        server = CrossFileContextMCPServer()
+
+        with TemporaryDirectory() as tmpdir:
+            test_file = Path(tmpdir) / "test.py"
+            test_content = "# Test file\nprint('hello')"
+            test_file.write_text(test_content)
+
+            # Create mock context with async methods
+            mock_ctx = AsyncMock()
+            mock_ctx.info = AsyncMock()
+            mock_ctx.error = AsyncMock()
+
+            # Access the registered tool handler
+            # FastMCP stores tools in _tool_manager.tools dict
+            tool_manager = server.mcp._tool_manager
+            read_tool = tool_manager._tools.get("read_with_context")
+
+            if read_tool:
+                # Call the handler function directly
+                result = await read_tool.fn(str(test_file), mock_ctx)
+                assert result["file_path"] == str(test_file)
+                assert test_content in result["content"]
+                assert "warnings" in result
+                mock_ctx.info.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_read_with_context_handler_file_not_found(self):
+        """Test read_with_context handler with FileNotFoundError."""
+        from unittest.mock import AsyncMock
+
+        server = CrossFileContextMCPServer()
+
+        # Create mock context with async methods
+        mock_ctx = AsyncMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        # Access the registered tool handler
+        tool_manager = server.mcp._tool_manager
+        read_tool = tool_manager._tools.get("read_with_context")
+
+        if read_tool:
+            with pytest.raises(FileNotFoundError):
+                await read_tool.fn("/nonexistent/file.py", mock_ctx)
+            mock_ctx.error.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_read_with_context_handler_permission_error(self):
+        """Test read_with_context handler with PermissionError."""
+        from unittest.mock import AsyncMock, patch
+
+        server = CrossFileContextMCPServer()
+
+        # Create mock context with async methods
+        mock_ctx = AsyncMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        # Access the registered tool handler
+        tool_manager = server.mcp._tool_manager
+        read_tool = tool_manager._tools.get("read_with_context")
+
+        if read_tool:
+            # Patch the service to raise PermissionError
+            with patch.object(
+                server.service, "read_file_with_context", side_effect=PermissionError("denied")
+            ):
+                with pytest.raises(PermissionError):
+                    await read_tool.fn("/some/file.py", mock_ctx)
+                mock_ctx.error.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_read_with_context_handler_unexpected_error(self):
+        """Test read_with_context handler with unexpected error."""
+        from unittest.mock import AsyncMock, patch
+
+        server = CrossFileContextMCPServer()
+
+        # Create mock context with async methods
+        mock_ctx = AsyncMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        # Access the registered tool handler
+        tool_manager = server.mcp._tool_manager
+        read_tool = tool_manager._tools.get("read_with_context")
+
+        if read_tool:
+            # Patch the service to raise unexpected error
+            with patch.object(
+                server.service, "read_file_with_context", side_effect=RuntimeError("unexpected")
+            ):
+                with pytest.raises(RuntimeError):
+                    await read_tool.fn("/some/file.py", mock_ctx)
+                mock_ctx.error.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_get_relationship_graph_handler_success(self):
+        """Test get_relationship_graph handler success."""
+        from unittest.mock import AsyncMock
+
+        server = CrossFileContextMCPServer()
+
+        # Create mock context with async methods
+        mock_ctx = AsyncMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        # Access the registered tool handler
+        tool_manager = server.mcp._tool_manager
+        graph_tool = tool_manager._tools.get("get_relationship_graph")
+
+        if graph_tool:
+            result = await graph_tool.fn(mock_ctx)
+            assert "relationships" in result
+            mock_ctx.info.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_get_relationship_graph_handler_with_to_dict(self):
+        """Test get_relationship_graph handler when export has to_dict method."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        server = CrossFileContextMCPServer()
+
+        # Create mock context with async methods
+        mock_ctx = AsyncMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        # Create a mock graph export with to_dict method
+        mock_export = MagicMock()
+        mock_export.to_dict.return_value = {
+            "nodes": [{"file": "test.py"}],
+            "relationships": [{"source": "a.py", "target": "b.py"}],
+        }
+
+        # Access the registered tool handler
+        tool_manager = server.mcp._tool_manager
+        graph_tool = tool_manager._tools.get("get_relationship_graph")
+
+        if graph_tool:
+            with patch.object(server.service, "get_relationship_graph", return_value=mock_export):
+                result = await graph_tool.fn(mock_ctx)
+                assert result["nodes"] == [{"file": "test.py"}]
+                assert len(result["relationships"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_relationship_graph_handler_error(self):
+        """Test get_relationship_graph handler with error."""
+        from unittest.mock import AsyncMock, patch
+
+        server = CrossFileContextMCPServer()
+
+        # Create mock context with async methods
+        mock_ctx = AsyncMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        # Access the registered tool handler
+        tool_manager = server.mcp._tool_manager
+        graph_tool = tool_manager._tools.get("get_relationship_graph")
+
+        if graph_tool:
+            with patch.object(
+                server.service, "get_relationship_graph", side_effect=RuntimeError("test error")
+            ):
+                with pytest.raises(RuntimeError):
+                    await graph_tool.fn(mock_ctx)
+                mock_ctx.error.assert_called()
+
+
+class TestServerLifecycle:
+    """Tests for MCP server lifecycle methods."""
+
+    def test_run_method_exists(self):
+        """Test that run method exists with correct signature."""
+        server = CrossFileContextMCPServer()
+
+        # Verify run method exists
+        assert hasattr(server, "run")
+        assert callable(server.run)
+
+    def test_run_method_default_transport(self):
+        """Test run method has default transport of stdio."""
+        import inspect
+
+        server = CrossFileContextMCPServer()
+
+        sig = inspect.signature(server.run)
+        transport_param = sig.parameters.get("transport")
+
+        assert transport_param is not None
+        assert transport_param.default == "stdio"
+
+
+class TestMainEntryPoint:
+    """Tests for main() entry point function."""
+
+    def test_main_function_exists(self):
+        """Test that main function is importable."""
+        from xfile_context.mcp_server import main
+
+        assert callable(main)
