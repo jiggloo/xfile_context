@@ -44,8 +44,11 @@ def ground_truth() -> dict[str, Any]:
 
 
 @pytest.fixture
-def default_config() -> Config:
-    """Create default configuration for tests."""
+def default_config():
+    """Create default configuration for tests.
+
+    Yields config and cleans up temporary file after test completes.
+    """
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
         f.write("enable_context_injection: true\n")
         f.write("context_token_limit: 500\n")
@@ -53,29 +56,44 @@ def default_config() -> Config:
         f.write("cache_size_limit_kb: 50\n")
         config_path = Path(f.name)
 
-    return Config(config_path)
+    yield Config(config_path)
+
+    # Cleanup temporary config file
+    config_path.unlink(missing_ok=True)
 
 
 @pytest.fixture
-def disabled_injection_config() -> Config:
-    """Create configuration with context injection disabled."""
+def disabled_injection_config():
+    """Create configuration with context injection disabled.
+
+    Yields config and cleans up temporary file after test completes.
+    """
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
         f.write("enable_context_injection: false\n")
         f.write("context_token_limit: 500\n")
         config_path = Path(f.name)
 
-    return Config(config_path)
+    yield Config(config_path)
+
+    # Cleanup temporary config file
+    config_path.unlink(missing_ok=True)
 
 
 @pytest.fixture
-def low_token_limit_config() -> Config:
-    """Create configuration with a very low token limit for testing."""
+def low_token_limit_config():
+    """Create configuration with a very low token limit for testing.
+
+    Yields config and cleans up temporary file after test completes.
+    """
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
         f.write("enable_context_injection: true\n")
         f.write("context_token_limit: 100\n")
         config_path = Path(f.name)
 
-    return Config(config_path)
+    yield Config(config_path)
+
+    # Cleanup temporary config file
+    config_path.unlink(missing_ok=True)
 
 
 @pytest.fixture
