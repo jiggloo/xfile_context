@@ -36,6 +36,10 @@ from xfile_context.service import CrossFileContextService
 TEST_CODEBASE_PATH = Path(__file__).parent / "test_codebase"
 GROUND_TRUTH_PATH = TEST_CODEBASE_PATH / "ground_truth.json"
 
+# High-impact threshold per FR-19/FR-20: Files used in 3+ locations
+# are flagged for extra caution during edits
+HIGH_IMPACT_THRESHOLD = 3
+
 
 @pytest.fixture(scope="module")
 def ground_truth() -> Dict[str, Any]:
@@ -91,12 +95,16 @@ def query_api(
 
 
 def normalize_path(path: str) -> str:
-    """Normalize a path for comparison (remove test_codebase prefix if relative)."""
-    path = str(path)
-    test_codebase_str = str(TEST_CODEBASE_PATH)
-    if path.startswith(test_codebase_str):
-        return path[len(test_codebase_str) + 1 :]  # +1 for the trailing slash
-    return path
+    """Normalize a path for comparison (remove test_codebase prefix if relative).
+
+    Uses pathlib for cross-platform compatibility.
+    """
+    path_obj = Path(path)
+    try:
+        return str(path_obj.relative_to(TEST_CODEBASE_PATH))
+    except ValueError:
+        # Path is not relative to TEST_CODEBASE_PATH
+        return str(path)
 
 
 class TestCrossFileAwareness:
@@ -177,7 +185,7 @@ class TestCrossFileAwareness:
         # Find a file with 3+ dependents from ground truth to test
         # Different Python versions may detect different numbers of relationships,
         # so we find a high-impact file dynamically
-        high_impact_threshold = 3
+        high_impact_threshold = HIGH_IMPACT_THRESHOLD
         high_impact_file = None
         expected_dependents = []
 
@@ -236,7 +244,7 @@ class TestCrossFileAwareness:
         ]
 
         # Should have fewer than 3 dependents (from external files)
-        high_impact_threshold = 3
+        high_impact_threshold = HIGH_IMPACT_THRESHOLD
         assert len(expected) < high_impact_threshold, (
             f"Ground truth should show <3 dependents for notification_service.py. "
             f"Found: {len(expected)}"
