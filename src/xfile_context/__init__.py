@@ -5,13 +5,19 @@
 
 from .cache import WorkingMemoryCache
 from .config import Config
+from .metrics_collector import (
+    MetricsCollector,
+    SessionMetrics,
+    calculate_percentile_statistics,
+    read_session_metrics,
+)
 from .service import CrossFileContextService, ReadResult
 from .storage import GraphExport, InMemoryStore, RelationshipStore
 from .warning_formatter import StructuredWarning, WarningEmitter, WarningFormatter
 from .warning_logger import WarningLogger, WarningStatistics, read_warnings_from_log
 from .warning_suppression import WarningSuppressionManager
 
-__version__ = "0.0.55"
+__version__ = "0.0.62"
 
 __all__ = [
     "RelationshipStore",
@@ -21,6 +27,10 @@ __all__ = [
     "CrossFileContextService",
     "ReadResult",
     "Config",
+    "MetricsCollector",
+    "SessionMetrics",
+    "calculate_percentile_statistics",
+    "read_session_metrics",
     "StructuredWarning",
     "WarningEmitter",
     "WarningFormatter",

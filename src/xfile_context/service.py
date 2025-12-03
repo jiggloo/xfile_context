@@ -44,6 +44,7 @@ from .injection_logger import (
     InjectionStatistics,
     get_recent_injections,
 )
+from .metrics_collector import MetricsCollector, SessionMetrics
 from .models import Relationship, RelationshipGraph, RelationshipType
 from .storage import GraphExport, InMemoryStore, RelationshipStore
 from .warning_formatter import StructuredWarning, WarningEmitter
@@ -127,6 +128,7 @@ class CrossFileContextService:
         analyzer: Optional[PythonAnalyzer] = None,
         graph_updater: Optional[GraphUpdater] = None,
         injection_logger: Optional[InjectionLogger] = None,
+        metrics_collector: Optional[MetricsCollector] = None,
     ):
         """Initialize the service with its dependencies.
 
@@ -143,6 +145,7 @@ class CrossFileContextService:
             analyzer: PythonAnalyzer instance (default: creates new analyzer)
             graph_updater: GraphUpdater instance (default: creates new updater)
             injection_logger: InjectionLogger instance (default: creates new logger)
+            metrics_collector: MetricsCollector instance (default: creates new collector)
         """
         self.config = config
         self._project_root = Path(project_root) if project_root else Path.cwd()
@@ -230,6 +233,34 @@ class CrossFileContextService:
             injection_logger
             if injection_logger is not None
             else InjectionLogger(log_dir=self._project_root / ".cross_file_context_logs")
+        )
+
+        # Initialize metrics collector for session metrics (TDD Section 3.10.1)
+        # Per FR-43: Emit metrics at session end
+        self._metrics_collector = (
+            metrics_collector
+            if metrics_collector is not None
+            else MetricsCollector(log_dir=self._project_root / ".cross_file_context_logs")
+        )
+
+        # Capture configuration values in metrics per FR-49
+        self._metrics_collector.set_configuration(
+            {
+                "cache_expiry_minutes": config.cache_expiry_minutes,
+                "cache_size_limit_kb": config.cache_size_limit_kb,
+                "context_token_limit": config.context_token_limit,
+                "function_usage_warning_threshold": config.function_usage_warning_threshold,
+                "warn_on_wildcards": config.warn_on_wildcards,
+                "enable_context_injection": config.enable_context_injection,
+            }
+        )
+
+        # Initialize warning logger for warning event logging (TDD Section 3.9.5)
+        # Shares log directory with injection logger and metrics collector
+        from .warning_logger import WarningLogger
+
+        self._warning_logger = WarningLogger(
+            log_dir=self._project_root / ".cross_file_context_logs"
         )
 
         logger.info(f"CrossFileContextService initialized with project_root={self._project_root}")
@@ -1129,6 +1160,10 @@ class CrossFileContextService:
             f"{len(prioritized)} dependencies, {snippets_added} snippets, {token_count} tokens"
         )
 
+        # Record token count for session metrics per FR-44
+        exceeded_threshold = token_count > self.config.context_token_limit
+        self._metrics_collector.record_injection_token_count(token_count, exceeded_threshold)
+
         return context_text, warnings
 
     def get_relationship_graph(self) -> GraphExport:
@@ -1319,15 +1354,59 @@ class CrossFileContextService:
         """
         return self._injection_logger.get_log_path()
 
+    def get_session_metrics(self) -> SessionMetrics:
+        """Get current session metrics without writing to file.
+
+        Builds session metrics from all system components for inspection
+        or intermediate analysis.
+
+        Returns:
+            SessionMetrics with current data from all subsystems.
+        """
+        return self._metrics_collector.build_session_metrics(
+            cache=self.cache,
+            injection_logger=self._injection_logger,
+            warning_logger=self._warning_logger,
+            graph=self._graph,
+        )
+
+    def get_metrics_log_path(self) -> Path:
+        """Get the path to the session metrics log file.
+
+        Returns:
+            Path to the session_metrics.jsonl file.
+        """
+        return self._metrics_collector.get_log_path()
+
+    def get_session_id(self) -> str:
+        """Get the current session ID.
+
+        Returns:
+            Session ID string (UUID).
+        """
+        return self._metrics_collector.get_session_id()
+
     def shutdown(self) -> None:
         """Shutdown the service and cleanup resources.
 
-        Stops file watcher, clears cache, closes loggers, and releases resources.
+        Stops file watcher, emits session metrics, clears cache, closes loggers,
+        and releases resources. Per FR-43: Metrics are emitted at session end.
         """
         logger.info("CrossFileContextService shutting down...")
 
         # Stop file watcher
         self.stop_file_watcher()
+
+        # Emit session metrics at session end per FR-43
+        try:
+            self._metrics_collector.finalize_and_write(
+                cache=self.cache,
+                injection_logger=self._injection_logger,
+                warning_logger=self._warning_logger,
+                graph=self._graph,
+            )
+        except Exception as e:
+            logger.error(f"Failed to write session metrics: {e}")
 
         # Clear cache
         self.cache.clear()
@@ -1337,5 +1416,8 @@ class CrossFileContextService:
 
         # Close injection logger (ensures final flush)
         self._injection_logger.close()
+
+        # Close warning logger
+        self._warning_logger.close()
 
         logger.info("CrossFileContextService shutdown complete")
