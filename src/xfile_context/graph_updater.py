@@ -23,9 +23,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .analyzers.python_analyzer import PythonAnalyzer
-from .file_watcher import FileWatcher
-from .models import FileMetadata, Relationship, RelationshipGraph
+from xfile_context.analyzers.python_analyzer import PythonAnalyzer
+from xfile_context.file_watcher import FileWatcher
+from xfile_context.models import FileMetadata, Relationship, RelationshipGraph
 
 logger = logging.getLogger(__name__)
 
@@ -154,13 +154,13 @@ class GraphUpdater:
                 # This is acceptable - file is unparseable so relationships are stale
 
             elapsed = time.time() - start_time
-            logger.debug(f"Graph update for {filepath} completed in {elapsed*1000:.1f}ms")
+            logger.debug(f"Graph update for {filepath} completed in {elapsed * 1000:.1f}ms")
 
             # Check performance target (NFR-1)
             if elapsed > 0.2:  # 200ms
                 logger.warning(
                     f"⚠️ Performance target exceeded: {filepath} update took "
-                    f"{elapsed*1000:.1f}ms (target: <200ms)"
+                    f"{elapsed * 1000:.1f}ms (target: <200ms)"
                 )
 
             return success
@@ -237,14 +237,14 @@ class GraphUpdater:
 
             elapsed = time.time() - start_time
             logger.debug(
-                f"Graph update for deleted file {filepath} completed in {elapsed*1000:.1f}ms"
+                f"Graph update for deleted file {filepath} completed in {elapsed * 1000:.1f}ms"
             )
 
             # Check performance target (NFR-1)
             if elapsed > 0.2:  # 200ms
                 logger.warning(
                     f"⚠️ Performance target exceeded: {filepath} deletion update took "
-                    f"{elapsed*1000:.1f}ms (target: <200ms)"
+                    f"{elapsed * 1000:.1f}ms (target: <200ms)"
                 )
 
             return True
@@ -327,14 +327,14 @@ class GraphUpdater:
 
             elapsed = time.time() - start_time
             logger.debug(
-                f"Graph update for created file {filepath} completed in {elapsed*1000:.1f}ms"
+                f"Graph update for created file {filepath} completed in {elapsed * 1000:.1f}ms"
             )
 
             # Check performance target (NFR-1)
             if elapsed > 0.2:  # 200ms
                 logger.warning(
                     f"⚠️ Performance target exceeded: {filepath} creation update took "
-                    f"{elapsed*1000:.1f}ms (target: <200ms)"
+                    f"{elapsed * 1000:.1f}ms (target: <200ms)"
                 )
 
             return success

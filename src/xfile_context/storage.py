@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from .models import Relationship
+from xfile_context.models import Relationship
 
 # Type alias for graph export format (FR-23, FR-25)
 GraphExport = Dict[str, Any]
@@ -231,7 +231,6 @@ class InMemoryStore(RelationshipStore):
                 and stored_rel.relationship_type == rel.relationship_type
                 and stored_rel.line_number == rel.line_number
             ):
-
                 # Remove from main storage
                 # Note: This leaves a gap but maintains index stability
                 # Gaps are acceptable for v0.1.0 (no persistence)

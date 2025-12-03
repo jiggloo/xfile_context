@@ -17,6 +17,6 @@ Architecture (DD-2: Language-agnostic file watcher):
 See TDD Section 3.4.2 for detailed specifications.
 """
 
-from .python_analyzer import PythonAnalyzer
+from xfile_context.analyzers.python_analyzer import PythonAnalyzer
 
 __all__ = ["PythonAnalyzer"]

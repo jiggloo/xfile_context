@@ -26,8 +26,8 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from ..models import Relationship, RelationshipType
-from .base import RelationshipDetector
+from xfile_context.detectors.base import RelationshipDetector
+from xfile_context.models import Relationship, RelationshipType
 
 logger = logging.getLogger(__name__)
 

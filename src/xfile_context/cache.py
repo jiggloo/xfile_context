@@ -351,7 +351,7 @@ class WorkingMemoryCache:
         self._stats.current_entry_count = len(self._cache)
 
         logger.debug(
-            f"LRU eviction complete: evicted={evicted_count} entries, " f"freed={bytes_freed}B"
+            f"LRU eviction complete: evicted={evicted_count} entries, freed={bytes_freed}B"
         )
 
     def invalidate(self, filepath: str) -> None:

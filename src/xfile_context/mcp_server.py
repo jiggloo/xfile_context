@@ -13,10 +13,10 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
 
-from .cache import WorkingMemoryCache
-from .config import Config
-from .service import CrossFileContextService
-from .storage import InMemoryStore
+from xfile_context.cache import WorkingMemoryCache
+from xfile_context.config import Config
+from xfile_context.service import CrossFileContextService
+from xfile_context.storage import InMemoryStore
 
 logger = logging.getLogger(__name__)
 

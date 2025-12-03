@@ -12,7 +12,7 @@ See TDD Section 3.4.4 for detailed specifications.
 import logging
 from typing import List
 
-from .base import RelationshipDetector
+from xfile_context.detectors.base import RelationshipDetector
 
 logger = logging.getLogger(__name__)
 

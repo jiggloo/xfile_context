@@ -21,9 +21,9 @@ import time
 from pathlib import Path
 from typing import List, Optional, Set
 
-from ..detectors.dynamic_pattern_detector import DynamicPatternDetector
-from ..detectors.registry import DetectorRegistry
-from ..models import FileMetadata, Relationship, RelationshipGraph
+from xfile_context.detectors.dynamic_pattern_detector import DynamicPatternDetector
+from xfile_context.detectors.registry import DetectorRegistry
+from xfile_context.models import FileMetadata, Relationship, RelationshipGraph
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class PythonAnalyzer:
                 return False
         except ASTParsingTimeoutError:
             logger.warning(
-                f"⚠️ Skipping {filepath}: AST parsing exceeded timeout " f"({self.timeout_seconds}s)"
+                f"⚠️ Skipping {filepath}: AST parsing exceeded timeout ({self.timeout_seconds}s)"
             )
             self._mark_unparseable(filepath)
             return False

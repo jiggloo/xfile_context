@@ -30,8 +30,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, List, Optional
 
-from ..pytest_config_parser import is_test_module
-from .base import RelationshipDetector
+from xfile_context.detectors.base import RelationshipDetector
+from xfile_context.pytest_config_parser import is_test_module
 
 logger = logging.getLogger(__name__)
 
