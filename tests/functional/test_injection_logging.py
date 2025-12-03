@@ -860,8 +860,130 @@ class TestInjectionEventDataclass:
         assert parsed["cache_age_seconds"] is None
 
 
+class TestInjectionLoggerEdgeCases:
+    """Edge case tests for InjectionLogger robustness and security."""
+
+    def test_invalid_log_file_path_rejected(
+        self,
+        temp_log_dir: Path,
+    ) -> None:
+        """Verify invalid log_file paths are rejected for security.
+
+        Tests path traversal protection per TDD Section 3.8.5.
+        """
+        # Attempt to create logger with path separator in filename
+        with pytest.raises(ValueError, match="must be a filename only"):
+            InjectionLogger(log_dir=temp_log_dir, log_file="../traversal.jsonl")
+
+        with pytest.raises(ValueError, match="must be a filename only"):
+            InjectionLogger(log_dir=temp_log_dir, log_file="sub/dir.jsonl")
+
+        with pytest.raises(ValueError, match="must be a filename only"):
+            InjectionLogger(log_dir=temp_log_dir, log_file="C:\\path.jsonl")
+
+    def test_context_manager_protocol(
+        self,
+        temp_log_dir: Path,
+        sample_injection_event: InjectionEvent,
+    ) -> None:
+        """Verify context manager protocol works correctly.
+
+        Tests that file handles are properly closed via __enter__/__exit__.
+        """
+        log_path = temp_log_dir / "injections.jsonl"
+
+        # Use context manager
+        with InjectionLogger(log_dir=temp_log_dir) as logger_ctx:
+            logger_ctx.log_injection(sample_injection_event)
+            # Verify file was created and has content
+            assert log_path.exists()
+
+        # After exit, file should be closed - verify we can still read it
+        events = read_injections_from_log(log_path)
+        assert len(events) == 1
+
+    def test_malformed_log_entries_handled_gracefully(
+        self,
+        temp_log_dir: Path,
+    ) -> None:
+        """Verify malformed log entries don't crash the query API.
+
+        Tests robustness of get_recent_injections with corrupted data.
+        """
+        log_path = temp_log_dir / "injections.jsonl"
+
+        # Write valid entry, malformed entry, then another valid entry
+        valid_event = InjectionEvent.create(
+            source_file="/valid/source.py",
+            target_file="/valid/target.py",
+            relationship_type="IMPORT",
+            snippet="valid",
+            snippet_location="source.py:1-1",
+            cache_age_seconds=1.0,
+            cache_hit=True,
+            token_count=5,
+            context_token_total=5,
+        )
+
+        with open(log_path, "w") as f:
+            # Write valid JSON
+            f.write(json.dumps(valid_event.to_dict()) + "\n")
+            # Write malformed JSON
+            f.write("{ this is not valid json }\n")
+            # Write JSON missing required fields
+            f.write('{"partial": "data"}\n')
+            # Write another valid entry
+            f.write(json.dumps(valid_event.to_dict()) + "\n")
+
+        # Query should skip malformed entries and return valid ones
+        events = get_recent_injections(log_path, limit=10)
+
+        # Should get 2 valid events (malformed ones skipped)
+        assert len(events) == 2
+
+    def test_clear_statistics(
+        self,
+        injection_logger: InjectionLogger,
+        multiple_injection_events: list[InjectionEvent],
+    ) -> None:
+        """Verify clear_statistics resets all counters."""
+        # Log some events
+        for event in multiple_injection_events:
+            injection_logger.log_injection(event)
+
+        # Verify stats accumulated
+        stats = injection_logger.get_statistics()
+        assert stats.total_injections == 3
+
+        # Clear stats
+        injection_logger.clear_statistics()
+
+        # Verify reset
+        stats_after = injection_logger.get_statistics()
+        assert stats_after.total_injections == 0
+        assert stats_after.cache_hit_count == 0
+        assert stats_after.total_tokens_injected == 0
+
+    def test_get_log_size_nonexistent_file(
+        self,
+        temp_log_dir: Path,
+    ) -> None:
+        """Verify get_log_size returns 0 for non-existent file."""
+        logger_instance = InjectionLogger(log_dir=temp_log_dir)
+
+        # Without logging anything, file doesn't exist
+        size = logger_instance.get_log_size()
+        assert size == 0
+
+        logger_instance.close()
+
+
 class TestInjectionStatistics:
-    """Tests for InjectionStatistics dataclass."""
+    """Tests for InjectionStatistics dataclass.
+
+    Validates metrics calculation and serialization for cache hit rates,
+    token counts, and other statistics (supports FR-29, T-5.6).
+    """
 
     def test_empty_statistics(self) -> None:
         """Verify empty statistics have correct defaults."""
