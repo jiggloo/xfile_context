@@ -1,0 +1,562 @@
+{
+  "version": "1.0.0",
+  "description": "Ground truth manifest for functional testing of cross-file context analysis",
+  "generated": "2025-01-01T00:00:00Z",
+  "file_count": 53,
+  "relationships": {
+    "core/models/base.py": {
+      "imports": [],
+      "imported_by": [
+        "core/models/user.py",
+        "core/models/product.py",
+        "core/models/order.py",
+        "core/services/base_service.py",
+        "data/repository.py",
+        "edge_cases/memory_management/ec15_memory_pressure.py",
+        "edge_cases/memory_management/ec17_massive_files.py",
+        "edge_cases/relationship_detection/ec10_metaclasses.py",
+        "edge_cases/failure_modes/ec19_graph_corruption.py"
+      ],
+      "type": "model"
+    },
+    "core/models/user.py": {
+      "imports": [
+        "core/models/base.py",
+        "core/utils/validation.py"
+      ],
+      "imported_by": [
+        "core/models/__init__.py",
+        "core/services/user_service.py",
+        "core/services/order_service.py",
+        "core/services/notification_service.py",
+        "api/endpoints.py",
+        "edge_cases/relationship_detection/ec3_aliased_imports.py",
+        "edge_cases/relationship_detection/ec5_conditional_imports.py",
+        "edge_cases/relationship_detection/ec6_dynamic_dispatch.py",
+        "edge_cases/relationship_detection/ec8_decorators.py",
+        "edge_cases/context_injection/ec11_stale_cache.py",
+        "edge_cases/context_injection/ec12_large_functions.py",
+        "edge_cases/context_injection/ec14_deleted_files.py",
+        "edge_cases/memory_management/ec15_memory_pressure.py",
+        "edge_cases/memory_management/ec16_long_sessions.py",
+        "edge_cases/failure_modes/ec18_parsing_failure.py",
+        "edge_cases/failure_modes/ec19_graph_corruption.py",
+        "edge_cases/failure_modes/ec20_concurrent_modifications.py"
+      ],
+      "type": "model",
+      "conditional_imports": [
+        {
+          "file": "core/models/order.py",
+          "condition": "TYPE_CHECKING"
+        }
+      ]
+    },
+    "core/models/product.py": {
+      "imports": [
+        "core/models/base.py",
+        "core/utils/formatting.py"
+      ],
+      "imported_by": [
+        "core/models/__init__.py",
+        "core/services/product_service.py",
+        "core/services/order_service.py",
+        "api/endpoints.py",
+        "edge_cases/relationship_detection/ec5_conditional_imports.py",
+        "edge_cases/context_injection/ec12_large_functions.py",
+        "edge_cases/context_injection/ec14_deleted_files.py",
+        "edge_cases/memory_management/ec15_memory_pressure.py",
+        "edge_cases/memory_management/ec16_long_sessions.py",
+        "edge_cases/failure_modes/ec20_concurrent_modifications.py"
+      ],
+      "type": "model",
+      "conditional_imports": [
+        {
+          "file": "core/models/order.py",
+          "condition": "TYPE_CHECKING"
+        }
+      ]
+    },
+    "core/models/order.py": {
+      "imports": [
+        "core/models/base.py",
+        "core/utils/formatting.py"
+      ],
+      "imported_by": [
+        "core/models/__init__.py",
+        "core/services/order_service.py",
+        "api/endpoints.py",
+        "edge_cases/relationship_detection/ec5_conditional_imports.py",
+        "edge_cases/context_injection/ec12_large_functions.py",
+        "edge_cases/memory_management/ec15_memory_pressure.py"
+      ],
+      "type": "model",
+      "conditional_imports": [
+        {
+          "file": "core/models/user.py",
+          "condition": "TYPE_CHECKING"
+        }
+      ]
+    },
+    "core/utils/formatting.py": {
+      "imports": [],
+      "imported_by": [
+        "core/utils/__init__.py",
+        "core/models/product.py",
+        "core/models/order.py",
+        "edge_cases/relationship_detection/ec3_aliased_imports.py"
+      ],
+      "type": "utility"
+    },
+    "core/utils/validation.py": {
+      "imports": [],
+      "imported_by": [
+        "core/utils/__init__.py",
+        "core/models/user.py",
+        "core/services/user_service.py",
+        "edge_cases/relationship_detection/ec3_aliased_imports.py",
+        "edge_cases/relationship_detection/ec5_conditional_imports.py",
+        "edge_cases/relationship_detection/ec7_monkey_patching.py",
+        "edge_cases/context_injection/ec11_stale_cache.py",
+        "edge_cases/failure_modes/ec18_parsing_failure.py",
+        "edge_cases/failure_modes/ec20_concurrent_modifications.py"
+      ],
+      "type": "utility"
+    },
+    "core/utils/helpers.py": {
+      "imports": [],
+      "imported_by": [
+        "core/utils/__init__.py",
+        "edge_cases/relationship_detection/ec2_dynamic_imports.py",
+        "edge_cases/relationship_detection/ec3_aliased_imports.py",
+        "edge_cases/relationship_detection/ec9_exec_eval.py"
+      ],
+      "type": "utility"
+    },
+    "core/services/base_service.py": {
+      "imports": [
+        "core/models/base.py",
+        "data/repository.py"
+      ],
+      "imported_by": [
+        "core/services/user_service.py",
+        "core/services/product_service.py",
+        "core/services/order_service.py"
+      ],
+      "type": "service"
+    },
+    "core/services/user_service.py": {
+      "imports": [
+        "core/models/user.py",
+        "core/services/base_service.py",
+        "core/utils/validation.py",
+        "data/repository.py"
+      ],
+      "imported_by": [
+        "core/services/__init__.py",
+        "api/endpoints.py",
+        "edge_cases/relationship_detection/ec5_conditional_imports.py",
+        "edge_cases/context_injection/ec14_deleted_files.py",
+        "edge_cases/memory_management/ec16_long_sessions.py"
+      ],
+      "type": "service"
+    },
+    "core/services/product_service.py": {
+      "imports": [
+        "core/models/product.py",
+        "core/services/base_service.py",
+        "data/repository.py"
+      ],
+      "imported_by": [
+        "core/services/__init__.py",
+        "core/services/order_service.py",
+        "api/endpoints.py",
+        "edge_cases/memory_management/ec16_long_sessions.py"
+      ],
+      "type": "service"
+    },
+    "core/services/order_service.py": {
+      "imports": [
+        "core/models/order.py",
+        "core/models/product.py",
+        "core/models/user.py",
+        "core/services/base_service.py",
+        "core/services/product_service.py",
+        "core/services/notification_service.py",
+        "data/repository.py"
+      ],
+      "imported_by": [
+        "core/services/__init__.py",
+        "api/endpoints.py"
+      ],
+      "type": "service"
+    },
+    "core/services/notification_service.py": {
+      "imports": [],
+      "imported_by": [
+        "core/services/__init__.py",
+        "core/services/order_service.py"
+      ],
+      "type": "service",
+      "conditional_imports": [
+        {
+          "file": "core/models/order.py",
+          "condition": "TYPE_CHECKING"
+        },
+        {
+          "file": "core/models/user.py",
+          "condition": "TYPE_CHECKING"
+        }
+      ]
+    },
+    "data/repository.py": {
+      "imports": [
+        "core/models/base.py"
+      ],
+      "imported_by": [
+        "data/__init__.py",
+        "data/in_memory_store.py",
+        "core/services/base_service.py",
+        "core/services/user_service.py",
+        "core/services/product_service.py",
+        "core/services/order_service.py"
+      ],
+      "type": "data"
+    },
+    "data/in_memory_store.py": {
+      "imports": [
+        "core/models/base.py",
+        "data/repository.py"
+      ],
+      "imported_by": [
+        "data/__init__.py"
+      ],
+      "type": "data"
+    },
+    "api/endpoints.py": {
+      "imports": [
+        "core/models/user.py",
+        "core/models/product.py",
+        "core/models/order.py",
+        "core/services/user_service.py",
+        "core/services/product_service.py",
+        "core/services/order_service.py"
+      ],
+      "imported_by": [
+        "api/__init__.py"
+      ],
+      "type": "api"
+    },
+    "api/middleware.py": {
+      "imports": [
+        "api/endpoints.py"
+      ],
+      "imported_by": [
+        "api/__init__.py"
+      ],
+      "type": "api"
+    },
+    "config/settings.py": {
+      "imports": [
+        "config/constants.py"
+      ],
+      "imported_by": [
+        "config/__init__.py"
+      ],
+      "type": "config"
+    },
+    "config/constants.py": {
+      "imports": [],
+      "imported_by": [
+        "config/__init__.py",
+        "config/settings.py"
+      ],
+      "type": "config"
+    }
+  },
+  "edge_cases": {
+    "EC-1": {
+      "description": "Circular Dependencies",
+      "files": [
+        "edge_cases/relationship_detection/ec1_circular_a.py",
+        "edge_cases/relationship_detection/ec1_circular_b.py"
+      ],
+      "expected_behavior": {
+        "detect_cycle": true,
+        "emit_warning": true,
+        "crash": false
+      },
+      "circular_dependency": {
+        "a_imports_b": true,
+        "b_imports_a": true
+      }
+    },
+    "EC-2": {
+      "description": "Dynamic Imports",
+      "files": [
+        "edge_cases/relationship_detection/ec2_dynamic_imports.py"
+      ],
+      "expected_behavior": {
+        "track_dynamic": false,
+        "log_untrackable": true,
+        "track_static": true
+      },
+      "static_imports": [
+        "core/utils/helpers.py"
+      ]
+    },
+    "EC-3": {
+      "description": "Aliased Imports",
+      "files": [
+        "edge_cases/relationship_detection/ec3_aliased_imports.py"
+      ],
+      "expected_behavior": {
+        "track_original": true,
+        "track_alias": true,
+        "match_both": true
+      },
+      "aliases": {
+        "fmt": "core/utils/formatting",
+        "check_email": "validate_email",
+        "check_phone": "validate_phone",
+        "UserModel": "User",
+        "slugify": "generate_slug",
+        "truncate": "truncate_text",
+        "sanitize": "sanitize_input"
+      }
+    },
+    "EC-4": {
+      "description": "Wildcard Imports",
+      "files": [
+        "edge_cases/relationship_detection/ec4_wildcard_imports.py"
+      ],
+      "expected_behavior": {
+        "track_module_level": true,
+        "track_function_level": false,
+        "optional_warning": true
+      },
+      "wildcard_from": "core/utils/__init__.py"
+    },
+    "EC-5": {
+      "description": "Conditional Imports (TYPE_CHECKING)",
+      "files": [
+        "edge_cases/relationship_detection/ec5_conditional_imports.py"
+      ],
+      "expected_behavior": {
+        "track_conditional": true,
+        "metadata_included": true
+      },
+      "conditional_imports": [
+        "core/models/user.py",
+        "core/models/order.py",
+        "core/models/product.py",
+        "core/services/user_service.py"
+      ]
+    },
+    "EC-6": {
+      "description": "Dynamic Dispatch",
+      "files": [
+        "edge_cases/relationship_detection/ec6_dynamic_dispatch.py"
+      ],
+      "expected_behavior": {
+        "emit_warning_source": true,
+        "emit_warning_test": false,
+        "track_relationship": false
+      },
+      "dynamic_patterns": [
+        "getattr(plugin, method_name)",
+        "getattr(self, handler_name)",
+        "getattr(obj, method_name)"
+      ]
+    },
+    "EC-7": {
+      "description": "Monkey Patching",
+      "files": [
+        "edge_cases/relationship_detection/ec7_monkey_patching.py"
+      ],
+      "expected_behavior": {
+        "emit_warning_source": true,
+        "emit_warning_test": false,
+        "track_original_only": true
+      },
+      "monkey_patches": [
+        "validation.validate_email = custom_email_validator"
+      ]
+    },
+    "EC-8": {
+      "description": "Decorators",
+      "files": [
+        "edge_cases/relationship_detection/ec8_decorators.py"
+      ],
+      "expected_behavior": {
+        "track_decorated": true,
+        "track_decorator_import": true,
+        "warn_dynamic_decorators": true
+      },
+      "decorators": [
+        "log_calls",
+        "retry",
+        "ensure_list",
+        "CacheResult"
+      ]
+    },
+    "EC-9": {
+      "description": "exec/eval Usage",
+      "files": [
+        "edge_cases/relationship_detection/ec9_exec_eval.py"
+      ],
+      "expected_behavior": {
+        "emit_warning": true,
+        "mark_dynamic_execution": true,
+        "analyze_string_code": false
+      },
+      "dynamic_execution": [
+        "exec(class_code, namespace)",
+        "eval(expression, ...)",
+        "compile(expression, '<string>', 'eval')"
+      ]
+    },
+    "EC-10": {
+      "description": "Metaclasses",
+      "files": [
+        "edge_cases/relationship_detection/ec10_metaclasses.py"
+      ],
+      "expected_behavior": {
+        "track_metaclass_usage": true,
+        "analyze_metaclass_logic": false,
+        "emit_info_warning": true
+      },
+      "metaclasses": [
+        "SingletonMeta",
+        "RegistryMeta",
+        "ValidationMeta"
+      ]
+    },
+    "EC-11": {
+      "description": "Stale Cache After External Edit",
+      "files": [
+        "edge_cases/context_injection/ec11_stale_cache.py"
+      ],
+      "expected_behavior": {
+        "file_watcher_detect": true,
+        "cache_invalidate": true,
+        "force_reread": true
+      }
+    },
+    "EC-12": {
+      "description": "Large Functions",
+      "files": [
+        "edge_cases/context_injection/ec12_large_functions.py"
+      ],
+      "expected_behavior": {
+        "inject_signature_only": true,
+        "provide_pointer": true
+      },
+      "large_functions": [
+        "process_complex_order",
+        "validate_order_comprehensively"
+      ]
+    },
+    "EC-13": {
+      "description": "Multiple Definitions",
+      "files": [
+        "edge_cases/context_injection/ec13_multiple_definitions.py",
+        "edge_cases/context_injection/ec13_multiple_definitions_alt.py"
+      ],
+      "expected_behavior": {
+        "detect_both": true,
+        "disambiguate": true
+      },
+      "duplicate_names": [
+        "process",
+        "transform",
+        "validate",
+        "Handler",
+        "Processor"
+      ]
+    },
+    "EC-14": {
+      "description": "Deleted Files",
+      "files": [
+        "edge_cases/context_injection/ec14_deleted_files.py"
+      ],
+      "expected_behavior": {
+        "file_watcher_detect": true,
+        "remove_from_graph": true,
+        "log_warning": true
+      }
+    },
+    "EC-15": {
+      "description": "Memory Pressure",
+      "files": [
+        "edge_cases/memory_management/ec15_memory_pressure.py"
+      ],
+      "expected_behavior": {
+        "lru_eviction": true,
+        "cache_limit_enforced": true
+      }
+    },
+    "EC-16": {
+      "description": "Long-Running Sessions",
+      "files": [
+        "edge_cases/memory_management/ec16_long_sessions.py"
+      ],
+      "expected_behavior": {
+        "rolling_window": true,
+        "keep_last_2_hours": true
+      }
+    },
+    "EC-17": {
+      "description": "Massive Files",
+      "files": [
+        "edge_cases/memory_management/ec17_massive_files.py"
+      ],
+      "expected_behavior": {
+        "skip_over_10k_lines": true,
+        "log_warning": true,
+        "treat_as_opaque": true
+      }
+    },
+    "EC-18": {
+      "description": "Parsing Failure",
+      "files": [
+        "edge_cases/failure_modes/ec18_parsing_failure.py"
+      ],
+      "expected_behavior": {
+        "skip_broken_file": true,
+        "log_error": true,
+        "continue_others": true
+      }
+    },
+    "EC-19": {
+      "description": "Graph Corruption",
+      "files": [
+        "edge_cases/failure_modes/ec19_graph_corruption.py"
+      ],
+      "expected_behavior": {
+        "detect_inconsistency": true,
+        "clear_graph": true,
+        "rebuild": true
+      }
+    },
+    "EC-20": {
+      "description": "Concurrent Modifications",
+      "files": [
+        "edge_cases/failure_modes/ec20_concurrent_modifications.py"
+      ],
+      "expected_behavior": {
+        "detect_each_change": true,
+        "invalidate_cache": true,
+        "maintain_consistency": true
+      }
+    }
+  },
+  "statistics": {
+    "total_files": 53,
+    "core_files": 20,
+    "edge_case_files": 21,
+    "init_files": 12,
+    "import_relationships": 89,
+    "conditional_imports": 7,
+    "edge_cases_covered": 20
+  }
+}
