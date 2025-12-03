@@ -329,6 +329,16 @@ class TestMetricsCollector:
         with pytest.raises(ValueError, match="filename only"):
             MetricsCollector(log_dir=temp_dir, log_file="subdir/metrics.jsonl")
 
+    def test_init_rejects_null_bytes_in_log_file(self, temp_dir: Path) -> None:
+        """Log file with null bytes should be rejected (security)."""
+        with pytest.raises(ValueError, match="null bytes"):
+            MetricsCollector(log_dir=temp_dir, log_file="metrics\0.jsonl")
+
+    def test_init_rejects_parent_directory_in_log_file(self, temp_dir: Path) -> None:
+        """Log file with parent directory reference should be rejected."""
+        with pytest.raises(ValueError, match="parent directory"):
+            MetricsCollector(log_dir=temp_dir, log_file="..metrics.jsonl")
+
     def test_record_injection_token_count(self, collector: MetricsCollector) -> None:
         """Token counts should be recorded."""
         collector.record_injection_token_count(100)

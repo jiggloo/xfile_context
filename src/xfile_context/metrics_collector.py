@@ -375,8 +375,14 @@ class MetricsCollector:
 
         # Validate log_file doesn't contain path components (security)
         log_file = log_file or DEFAULT_METRICS_LOG_FILE
-        if "/" in log_file or "\\" in log_file or ":" in log_file:
+        # Check for null bytes (security - prevent path truncation attacks)
+        if "\0" in log_file:
+            raise ValueError(f"log_file contains null bytes: {log_file}")
+        # Check for path separators and parent directory references
+        if "/" in log_file or "\\" in log_file:
             raise ValueError(f"log_file must be a filename only, not a path: {log_file}")
+        if ".." in log_file:
+            raise ValueError(f"log_file cannot contain parent directory references: {log_file}")
         self._log_file = log_file
 
         self._anonymize_paths = anonymize_paths
