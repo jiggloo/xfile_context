@@ -183,7 +183,7 @@ enable_warning_logging: true
 metrics_anonymize_paths: false
 ```
 
-All configuration options shown above with their default values. Set `enable_context_injection: false` to disable context injection entirely.
+All configuration options are shown above with their default values. Set `enable_context_injection: false` to disable context injection entirely.
 
 ## Quick Start Guide
 
@@ -318,7 +318,7 @@ pip install -e ".[dev]"
 **Symptom**: Expected dynamic pattern warnings are not shown.
 
 **Possible causes**:
-1. **Test module suppression**: Warnings for dynamic patterns (monkey patching, dynamic dispatch) are automatically suppressed in test files
+1. **Test module suppression**: Warnings for dynamic patterns are automatically suppressed in test files (matching `test_*.py`, `*_test.py`, `tests/**/*.py`, or `conftest.py`)
 2. **Warning suppression config**: Check `.cross_file_context_links.yml` for `suppress_warnings` entries
 3. **Pattern type suppression**: Check for `suppress_dynamic_dispatch_warnings: true` or similar
 
