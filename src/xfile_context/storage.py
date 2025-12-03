@@ -15,7 +15,8 @@ See TDD Section 3.4.7 for detailed specifications.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 from .models import Relationship
 
@@ -85,14 +86,21 @@ class RelationshipStore(ABC):
         pass
 
     @abstractmethod
-    def export_graph(self) -> GraphExport:
+    def export_graph(self, project_root: Optional[str] = None) -> GraphExport:
         """Export graph to JSON-compatible dict (FR-23, FR-25).
+
+        Implements TDD Section 3.10.3 graph export format.
+
+        Args:
+            project_root: Project root directory for computing relative paths.
+                         If None, relative paths will not be included.
 
         Returns:
             Dictionary containing:
-            - version: Format version string
+            - metadata: timestamp, version, language, project_root, counts
+            - files: list of file info with paths
             - relationships: List of relationship dicts
-            - statistics: Graph-level statistics
+            - graph_metadata: circular imports, most connected files
         """
         pass
 
@@ -285,24 +293,75 @@ class InMemoryStore(RelationshipStore):
         """
         return [rel for rel in self._relationships if rel is not None]
 
-    def export_graph(self) -> GraphExport:
+    def export_graph(self, project_root: Optional[str] = None) -> GraphExport:
         """Export graph to JSON-compatible dict (FR-23, FR-25).
 
+        Implements TDD Section 3.10.3 graph export format.
+        Note: InMemoryStore has limited metadata - for full export with file
+        metadata, use RelationshipGraph.export_to_dict() via the service layer.
+
+        Args:
+            project_root: Project root directory for computing relative paths.
+                         If None, relative paths will not be included.
+
         Returns:
-            Dictionary containing:
-            - version: Format version "0.1.0"
-            - relationships: List of relationship dicts
-            - statistics: Total relationship count, total files
+            Dictionary containing graph export per TDD Section 3.10.3.
         """
+        import os
+
         all_rels = self.get_all_relationships()
 
-        return {
+        # Build metadata section
+        metadata: Dict[str, Any] = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "version": "0.1.0",
-            "relationships": [rel.to_dict() for rel in all_rels],
-            "statistics": {
-                "total_relationships": len(all_rels),
-                "total_files": len(self._by_file),
-            },
+            "language": "python",
+            "total_files": len(self._by_file),
+            "total_relationships": len(all_rels),
+        }
+        if project_root:
+            metadata["project_root"] = project_root
+
+        # Build files section (basic info from index)
+        files = []
+        for filepath in self._by_file:
+            file_entry: Dict[str, Any] = {
+                "path": filepath,
+                "relationship_count": len(self._by_file[filepath]),
+                "in_import_cycle": False,  # Cycle detection deferred to v0.1.1+
+            }
+            if project_root:
+                try:
+                    file_entry["relative_path"] = os.path.relpath(filepath, project_root)
+                except ValueError:
+                    file_entry["relative_path"] = filepath
+            files.append(file_entry)
+
+        # Build relationships section
+        relationships = [rel.to_dict() for rel in all_rels]
+
+        # Build graph_metadata section
+        # Count dependents for most connected files
+        dependency_counts: Dict[str, int] = {}
+        for rel in all_rels:
+            if rel.target_file not in dependency_counts:
+                dependency_counts[rel.target_file] = 0
+            dependency_counts[rel.target_file] += 1
+
+        sorted_files = sorted(dependency_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+
+        graph_metadata = {
+            "circular_imports": [],  # Deferred to v0.1.1+
+            "most_connected_files": [
+                {"file": filepath, "dependency_count": count} for filepath, count in sorted_files
+            ],
+        }
+
+        return {
+            "metadata": metadata,
+            "files": files,
+            "relationships": relationships,
+            "graph_metadata": graph_metadata,
         }
 
     def clear(self) -> None:

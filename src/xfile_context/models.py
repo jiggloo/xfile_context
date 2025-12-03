@@ -15,8 +15,9 @@ All models use JSON-compatible primitives (DD-4) for serialization.
 """
 
 import logging
-import time
+import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
@@ -291,27 +292,108 @@ class RelationshipGraph:
             logger.error(f"Graph removal failed for {filepath}: {e}")
             raise
 
-    def export_to_dict(self) -> Dict[str, Any]:
+    def export_to_dict(self, project_root: Optional[str] = None) -> Dict[str, Any]:
         """Export graph to JSON-compatible dict (FR-23, FR-25).
 
+        Implements TDD Section 3.10.3 graph export format with:
+        - metadata: timestamp, version, language, project_root, counts
+        - files: list of file info with absolute and relative paths
+        - relationships: all detected relationships with full metadata
+        - graph_metadata: circular imports, most connected files
+
+        Args:
+            project_root: Project root directory for computing relative paths.
+                         If None, relative paths will not be included.
+
         Returns:
-            Dictionary containing relationships, file metadata, and statistics.
+            Dictionary containing full graph export per TDD Section 3.10.3.
         """
-        return {
+        # Build metadata section
+        metadata = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "version": "0.1.0",
-            "timestamp": time.time(),
-            "relationships": [rel.to_dict() for rel in self._relationships],
-            "file_metadata": {
-                filepath: metadata.to_dict() for filepath, metadata in self._file_metadata.items()
-            },
-            "statistics": {
-                "total_files": len(self._file_metadata),
-                "total_relationships": len(self._relationships),
-                "files_with_dynamic_patterns": sum(
-                    1 for m in self._file_metadata.values() if m.has_dynamic_patterns
-                ),
-            },
+            "language": "python",
+            "total_files": len(self._file_metadata),
+            "total_relationships": len(self._relationships),
         }
+        if project_root:
+            metadata["project_root"] = project_root
+
+        # Build files section with both absolute and relative paths
+        files = []
+        for filepath, file_meta in self._file_metadata.items():
+            file_entry: Dict[str, Any] = {
+                "path": filepath,
+                "last_modified": datetime.fromtimestamp(
+                    file_meta.last_analyzed, tz=timezone.utc
+                ).isoformat(),
+                "relationship_count": file_meta.relationship_count,
+                "in_import_cycle": False,  # Cycle detection deferred to v0.1.1+
+            }
+            # Add relative path if project_root provided
+            if project_root:
+                file_entry["relative_path"] = self._compute_relative_path(filepath, project_root)
+            files.append(file_entry)
+
+        # Build relationships section
+        relationships = []
+        for rel in self._relationships:
+            rel_entry = rel.to_dict()
+            # Ensure metadata structure matches TDD 3.10.3
+            if rel.metadata:
+                rel_entry["metadata"] = rel.metadata
+            relationships.append(rel_entry)
+
+        # Build graph_metadata section
+        graph_metadata = {
+            # Circular imports detection deferred to v0.1.1+ (see TDD Section 3.5.5)
+            "circular_imports": [],
+            "most_connected_files": self._get_most_connected_files(limit=10),
+        }
+
+        return {
+            "metadata": metadata,
+            "files": files,
+            "relationships": relationships,
+            "graph_metadata": graph_metadata,
+        }
+
+    def _compute_relative_path(self, filepath: str, project_root: str) -> str:
+        """Compute relative path from project root.
+
+        Args:
+            filepath: Absolute file path.
+            project_root: Project root directory.
+
+        Returns:
+            Relative path from project root, or original path if not under root.
+        """
+        try:
+            return os.path.relpath(filepath, project_root)
+        except ValueError:
+            # On Windows, relpath fails for paths on different drives
+            return filepath
+
+    def _get_most_connected_files(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get files with highest dependency counts.
+
+        Counts files that have the most dependents (most imported by other files).
+
+        Args:
+            limit: Maximum number of files to return.
+
+        Returns:
+            List of dicts with 'file' and 'dependency_count' keys, sorted by count.
+        """
+        # Count dependents for each file (how many files depend on it)
+        dependency_counts: Dict[str, int] = {}
+        for filepath in self._dependents:
+            dependency_counts[filepath] = len(self._dependents[filepath])
+
+        # Sort by count descending and take top N
+        sorted_files = sorted(dependency_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+
+        return [{"file": filepath, "dependency_count": count} for filepath, count in sorted_files]
 
     def get_all_relationships(self) -> List[Relationship]:
         """Get all relationships in the graph.

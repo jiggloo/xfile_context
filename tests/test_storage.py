@@ -322,10 +322,11 @@ class TestInMemoryStore:
         store = InMemoryStore()
         export = store.export_graph()
 
-        assert export["version"] == "0.1.0"
+        # TDD Section 3.10.3 structure
+        assert export["metadata"]["version"] == "0.1.0"
         assert export["relationships"] == []
-        assert export["statistics"]["total_relationships"] == 0
-        assert export["statistics"]["total_files"] == 0
+        assert export["metadata"]["total_relationships"] == 0
+        assert export["metadata"]["total_files"] == 0
 
     def test_export_graph_with_relationships(self):
         """Test exporting graph with relationships."""
@@ -348,10 +349,11 @@ class TestInMemoryStore:
 
         export = store.export_graph()
 
-        assert export["version"] == "0.1.0"
+        # TDD Section 3.10.3 structure
+        assert export["metadata"]["version"] == "0.1.0"
         assert len(export["relationships"]) == 2
-        assert export["statistics"]["total_relationships"] == 2
-        assert export["statistics"]["total_files"] == 3  # a, b, c
+        assert export["metadata"]["total_relationships"] == 2
+        assert export["metadata"]["total_files"] == 3  # a, b, c
 
         # Verify relationship dicts are correct
         rel_dicts = export["relationships"]
@@ -380,9 +382,44 @@ class TestInMemoryStore:
 
         export = store.export_graph()
 
-        assert export["statistics"]["total_relationships"] == 1
+        assert export["metadata"]["total_relationships"] == 1
         assert len(export["relationships"]) == 1
         assert export["relationships"][0]["target_file"] == "c.py"
+
+    def test_export_graph_tdd_3103_structure(self):
+        """Test export follows TDD Section 3.10.3 structure."""
+        store = InMemoryStore()
+        rel = Relationship(
+            source_file="/project/a.py",
+            target_file="/project/b.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        store.add_relationship(rel)
+
+        export = store.export_graph(project_root="/project")
+
+        # Required top-level keys
+        assert "metadata" in export
+        assert "files" in export
+        assert "relationships" in export
+        assert "graph_metadata" in export
+
+        # Metadata section
+        assert "timestamp" in export["metadata"]
+        assert export["metadata"]["version"] == "0.1.0"
+        assert export["metadata"]["language"] == "python"
+        assert export["metadata"]["project_root"] == "/project"
+
+        # Files section
+        assert len(export["files"]) == 2  # a.py and b.py
+        for f in export["files"]:
+            assert "path" in f
+            assert "relative_path" in f
+
+        # Graph metadata
+        assert "circular_imports" in export["graph_metadata"]
+        assert "most_connected_files" in export["graph_metadata"]
 
     def test_clear(self):
         """Test clearing all relationships."""
@@ -460,8 +497,13 @@ class TestInMemoryStore:
             def get_all_relationships(self):
                 return self.added
 
-            def export_graph(self):
-                return {"version": "mock", "relationships": []}
+            def export_graph(self, project_root=None):
+                return {
+                    "metadata": {"version": "mock"},
+                    "files": [],
+                    "relationships": [],
+                    "graph_metadata": {},
+                }
 
         # Use mock store
         mock = MockStore()

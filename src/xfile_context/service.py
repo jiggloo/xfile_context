@@ -1169,10 +1169,16 @@ class CrossFileContextService:
     def get_relationship_graph(self) -> GraphExport:
         """Get the full relationship graph for export.
 
+        Returns the full graph export per TDD Section 3.10.3 with:
+        - metadata: timestamp, version, language, project_root, counts
+        - files: list of file info with absolute and relative paths
+        - relationships: all detected relationships with full metadata
+        - graph_metadata: circular imports, most connected files
+
         Returns:
             GraphExport object with current graph state (FR-23, FR-25).
         """
-        return self.store.export_graph()
+        return self._graph.export_to_dict(project_root=str(self._project_root))
 
     def get_dependents(self, file_path: str) -> List[Dict[str, Any]]:
         """Get files that depend on the given file.
