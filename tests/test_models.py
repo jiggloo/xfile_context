@@ -481,31 +481,36 @@ class TestRelationshipGraph:
 
         export = graph.export_to_dict()
 
-        # Check structure
-        assert "version" in export
+        # Check TDD Section 3.10.3 structure
+        assert "metadata" in export
+        assert "files" in export
         assert "relationships" in export
-        assert "file_metadata" in export
-        assert "statistics" in export
+        assert "graph_metadata" in export
 
-        # Check version
-        assert export["version"] == "0.1.0"
+        # Check metadata section
+        assert export["metadata"]["version"] == "0.1.0"
+        assert export["metadata"]["language"] == "python"
+        assert export["metadata"]["total_files"] == 1
+        assert export["metadata"]["total_relationships"] == 1
+        assert "timestamp" in export["metadata"]
 
         # Check relationships
         assert len(export["relationships"]) == 1
         assert export["relationships"][0]["source_file"] == "src/bot.py"
         assert export["relationships"][0]["target_file"] == "src/retry.py"
 
-        # Check file metadata
-        assert "src/bot.py" in export["file_metadata"]
-        assert export["file_metadata"]["src/bot.py"]["relationship_count"] == 1
+        # Check files section
+        assert len(export["files"]) == 1
+        assert export["files"][0]["path"] == "src/bot.py"
+        assert export["files"][0]["relationship_count"] == 1
+        assert "last_modified" in export["files"][0]
 
-        # Check statistics
-        assert export["statistics"]["total_files"] == 1
-        assert export["statistics"]["total_relationships"] == 1
-        assert export["statistics"]["files_with_dynamic_patterns"] == 0
+        # Check graph_metadata section
+        assert "circular_imports" in export["graph_metadata"]
+        assert "most_connected_files" in export["graph_metadata"]
 
-    def test_export_with_dynamic_patterns(self):
-        """Test export statistics count files with dynamic patterns correctly."""
+    def test_export_metadata_section(self):
+        """Test export metadata section contains required fields (TDD 3.10.3)."""
         graph = RelationshipGraph()
 
         metadata1 = FileMetadata(
@@ -531,12 +536,14 @@ class TestRelationshipGraph:
 
         export = graph.export_to_dict()
 
-        assert export["statistics"]["total_files"] == 2
-        assert export["statistics"]["files_with_dynamic_patterns"] == 1
+        # Check metadata section
+        assert export["metadata"]["total_files"] == 2
+        assert export["metadata"]["version"] == "0.1.0"
+        assert export["metadata"]["language"] == "python"
 
     def test_export_includes_timestamp(self):
-        """Test that export includes a timestamp field (TDD 3.3.2)."""
-        import time
+        """Test that export includes ISO format timestamp (TDD 3.10.3)."""
+        from datetime import datetime
 
         graph = RelationshipGraph()
         rel = Relationship(
@@ -547,14 +554,15 @@ class TestRelationshipGraph:
         )
         graph.add_relationship(rel)
 
-        before_time = time.time()
         export = graph.export_to_dict()
-        after_time = time.time()
 
-        # Check timestamp exists and is recent
-        assert "timestamp" in export
-        assert isinstance(export["timestamp"], float)
-        assert before_time <= export["timestamp"] <= after_time
+        # Check timestamp exists and is ISO format string
+        assert "timestamp" in export["metadata"]
+        timestamp_str = export["metadata"]["timestamp"]
+        assert isinstance(timestamp_str, str)
+        # Verify ISO format by parsing
+        parsed = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+        assert parsed is not None
 
     def test_validate_graph_valid(self):
         """Test validation passes for a correctly structured graph (EC-19)."""
@@ -1073,3 +1081,288 @@ class TestCacheStatistics:
         assert reconstructed.peak_size_bytes == original.peak_size_bytes
         assert reconstructed.current_entry_count == original.current_entry_count
         assert reconstructed.peak_entry_count == original.peak_entry_count
+
+
+class TestGraphExportValidation:
+    """Tests for graph export validation (T-4.5, T-4.6, T-4.7).
+
+    These tests validate the graph export functionality per TDD Section 3.10.3.
+    """
+
+    def test_export_produces_valid_json_t45(self):
+        """T-4.5: Graph export produces valid JSON.
+
+        Validates that the export can be serialized to JSON without errors.
+        """
+        import json
+
+        graph = RelationshipGraph()
+        rel = Relationship(
+            source_file="/project/src/bot.py",
+            target_file="/project/src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+            target_symbol="retry_with_backoff",
+            target_line=120,
+        )
+        metadata = FileMetadata(
+            filepath="/project/src/bot.py",
+            last_analyzed=1700000000.0,
+            relationship_count=1,
+            has_dynamic_patterns=False,
+            dynamic_pattern_types=[],
+            is_unparseable=False,
+        )
+
+        graph.add_relationship(rel)
+        graph.set_file_metadata("/project/src/bot.py", metadata)
+
+        export = graph.export_to_dict(project_root="/project")
+
+        # Should not raise - valid JSON
+        json_str = json.dumps(export)
+        assert len(json_str) > 0
+
+        # Round-trip should work
+        parsed = json.loads(json_str)
+        assert parsed["metadata"]["version"] == "0.1.0"
+
+    def test_export_contains_all_required_fields_t46(self):
+        """T-4.6: Exported graph contains all required fields.
+
+        Validates TDD Section 3.10.3 structure:
+        - metadata: timestamp, version, language, project_root, counts
+        - files: path, relative_path, last_modified, relationship_count, in_import_cycle
+        - relationships: all relationship fields
+        - graph_metadata: circular_imports, most_connected_files
+        """
+        graph = RelationshipGraph()
+
+        # Add relationships
+        rel1 = Relationship(
+            source_file="/project/src/bot.py",
+            target_file="/project/src/retry.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+            target_symbol="retry_with_backoff",
+            target_line=120,
+            metadata={"import_style": "from...import"},
+        )
+        rel2 = Relationship(
+            source_file="/project/src/handlers.py",
+            target_file="/project/src/retry.py",
+            relationship_type=RelationshipType.FUNCTION_CALL,
+            line_number=10,
+        )
+
+        # Add file metadata
+        metadata1 = FileMetadata(
+            filepath="/project/src/bot.py",
+            last_analyzed=1700000000.0,
+            relationship_count=1,
+            has_dynamic_patterns=False,
+            dynamic_pattern_types=[],
+            is_unparseable=False,
+        )
+        metadata2 = FileMetadata(
+            filepath="/project/src/handlers.py",
+            last_analyzed=1700000100.0,
+            relationship_count=1,
+            has_dynamic_patterns=True,
+            dynamic_pattern_types=["exec_eval"],
+            is_unparseable=False,
+        )
+
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+        graph.set_file_metadata("/project/src/bot.py", metadata1)
+        graph.set_file_metadata("/project/src/handlers.py", metadata2)
+
+        export = graph.export_to_dict(project_root="/project")
+
+        # Validate metadata section (TDD 3.10.3)
+        meta = export["metadata"]
+        assert "timestamp" in meta
+        assert meta["version"] == "0.1.0"
+        assert meta["language"] == "python"
+        assert meta["project_root"] == "/project"
+        assert meta["total_files"] == 2
+        assert meta["total_relationships"] == 2
+
+        # Validate files section (TDD 3.10.3)
+        assert len(export["files"]) == 2
+        for file_entry in export["files"]:
+            assert "path" in file_entry
+            assert "relative_path" in file_entry
+            assert "last_modified" in file_entry
+            assert "relationship_count" in file_entry
+            assert "in_import_cycle" in file_entry
+
+        # Validate relationships section (TDD 3.10.3)
+        assert len(export["relationships"]) == 2
+        for rel_entry in export["relationships"]:
+            assert "source_file" in rel_entry
+            assert "target_file" in rel_entry
+            assert "relationship_type" in rel_entry
+            assert "line_number" in rel_entry
+
+        # Validate graph_metadata section (TDD 3.10.3)
+        graph_meta = export["graph_metadata"]
+        assert "circular_imports" in graph_meta
+        assert "most_connected_files" in graph_meta
+        assert isinstance(graph_meta["circular_imports"], list)
+        assert isinstance(graph_meta["most_connected_files"], list)
+
+    def test_export_can_be_parsed_by_external_tools_t47(self):
+        """T-4.7: External tools can parse exported graph.
+
+        Validates that the export format is machine-parseable by simulating
+        an external tool parsing and extracting relationships.
+        """
+        import json
+
+        graph = RelationshipGraph()
+
+        # Create a realistic graph
+        files = [
+            "/project/src/main.py",
+            "/project/src/utils.py",
+            "/project/src/config.py",
+            "/project/lib/helpers.py",
+        ]
+
+        for i, source in enumerate(files):
+            for j, target in enumerate(files):
+                if i != j:
+                    rel = Relationship(
+                        source_file=source,
+                        target_file=target,
+                        relationship_type=RelationshipType.IMPORT,
+                        line_number=i * 10 + j + 1,
+                    )
+                    graph.add_relationship(rel)
+
+            metadata = FileMetadata(
+                filepath=source,
+                last_analyzed=1700000000.0 + i * 100,
+                relationship_count=len(files) - 1,
+                has_dynamic_patterns=False,
+                dynamic_pattern_types=[],
+                is_unparseable=False,
+            )
+            graph.set_file_metadata(source, metadata)
+
+        export = graph.export_to_dict(project_root="/project")
+
+        # Serialize and parse (simulating external tool)
+        json_str = json.dumps(export)
+        parsed = json.loads(json_str)
+
+        # External tool operations:
+        # 1. Get version for compatibility check
+        version = parsed["metadata"]["version"]
+        assert version == "0.1.0"
+
+        # 2. Count relationships
+        rel_count = len(parsed["relationships"])
+        assert rel_count == 12  # 4 files * 3 relationships each
+
+        # 3. Extract all source files
+        source_files = {r["source_file"] for r in parsed["relationships"]}
+        assert len(source_files) == 4
+
+        # 4. Find most connected files
+        most_connected = parsed["graph_metadata"]["most_connected_files"]
+        assert len(most_connected) > 0
+        # Each file should have 3 incoming dependencies
+        for mc in most_connected:
+            assert mc["dependency_count"] == 3
+
+        # 5. Get relative paths for portability
+        for file_entry in parsed["files"]:
+            assert file_entry["relative_path"].startswith("src/") or file_entry[
+                "relative_path"
+            ].startswith("lib/")
+
+    def test_export_includes_both_absolute_and_relative_paths(self):
+        """Test that export includes both absolute and relative paths (FR-25)."""
+        graph = RelationshipGraph()
+
+        metadata = FileMetadata(
+            filepath="/project/src/module.py",
+            last_analyzed=1700000000.0,
+            relationship_count=0,
+            has_dynamic_patterns=False,
+            dynamic_pattern_types=[],
+            is_unparseable=False,
+        )
+        graph.set_file_metadata("/project/src/module.py", metadata)
+
+        export = graph.export_to_dict(project_root="/project")
+
+        # Check files have both path types
+        file_entry = export["files"][0]
+        assert file_entry["path"] == "/project/src/module.py"  # Absolute
+        assert file_entry["relative_path"] == "src/module.py"  # Relative
+
+    def test_export_most_connected_files_sorted(self):
+        """Test that most_connected_files are sorted by dependency count."""
+        graph = RelationshipGraph()
+
+        # Create relationships where utils.py is most imported
+        source_files = ["a.py", "b.py", "c.py", "d.py"]
+        target_counts = {
+            "utils.py": 4,  # Most imported
+            "config.py": 2,
+            "helpers.py": 1,
+        }
+
+        line_num = 1
+        for target, count in target_counts.items():
+            for i in range(count):
+                rel = Relationship(
+                    source_file=source_files[i],
+                    target_file=target,
+                    relationship_type=RelationshipType.IMPORT,
+                    line_number=line_num,
+                )
+                graph.add_relationship(rel)
+                line_num += 1
+
+        export = graph.export_to_dict()
+
+        most_connected = export["graph_metadata"]["most_connected_files"]
+
+        # Should be sorted descending by dependency_count
+        assert len(most_connected) >= 3
+        assert most_connected[0]["file"] == "utils.py"
+        assert most_connected[0]["dependency_count"] == 4
+        assert most_connected[1]["file"] == "config.py"
+        assert most_connected[1]["dependency_count"] == 2
+
+    def test_export_without_project_root(self):
+        """Test export works without project_root (no relative paths)."""
+        graph = RelationshipGraph()
+
+        metadata = FileMetadata(
+            filepath="/some/path/file.py",
+            last_analyzed=1700000000.0,
+            relationship_count=0,
+            has_dynamic_patterns=False,
+            dynamic_pattern_types=[],
+            is_unparseable=False,
+        )
+        graph.set_file_metadata("/some/path/file.py", metadata)
+
+        export = graph.export_to_dict()  # No project_root
+
+        # Should still work
+        assert "metadata" in export
+        assert "files" in export
+
+        # project_root should not be in metadata
+        assert "project_root" not in export["metadata"]
+
+        # Files should have path but no relative_path
+        assert export["files"][0]["path"] == "/some/path/file.py"
+        assert "relative_path" not in export["files"][0]
