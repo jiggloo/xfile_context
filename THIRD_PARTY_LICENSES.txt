@@ -75,13 +75,6 @@ Author: UNKNOWN
 URL: https://github.com/pallets/click/
 --------------------------------------------------------------------------------
 
-Package: colorama
-Version: 0.4.6
-License: BSD License
-Author: Jonathan Hartley <tartley@tartley.com>
-URL: https://github.com/tartley/colorama
---------------------------------------------------------------------------------
-
 Package: coverage
 Version: 7.12.0
 License: Apache-2.0
@@ -194,15 +187,8 @@ Author: Jukka Lehtosalo <jukka.lehtosalo@iki.fi>, Ivan Levkivskyi <levkivskyi@gm
 URL: https://github.com/mypyc/librt
 --------------------------------------------------------------------------------
 
-Package: mando
-Version: 0.7.1
-License: MIT License
-Author: Michele Lacchia
-URL: https://mando.readthedocs.org/
---------------------------------------------------------------------------------
-
 Package: mcp
-Version: 1.22.0
+Version: 1.23.1
 License: MIT License
 Author: Anthropic, PBC.
 URL: https://modelcontextprotocol.io
@@ -355,13 +341,6 @@ Author: Kirill Simonov
 URL: https://pyyaml.org/
 --------------------------------------------------------------------------------
 
-Package: radon
-Version: 6.0.1
-License: MIT License
-Author: Michele Lacchia
-URL: https://radon.readthedocs.org/
---------------------------------------------------------------------------------
-
 Package: referencing
 Version: 0.37.0
 License: MIT
@@ -395,13 +374,6 @@ Version: 0.14.7
 License: MIT License
 Author: "Astral Software Inc." <hey@astral.sh>
 URL: https://docs.astral.sh/ruff
---------------------------------------------------------------------------------
-
-Package: six
-Version: 1.17.0
-License: MIT License
-Author: Benjamin Peterson
-URL: https://github.com/benjaminp/six
 --------------------------------------------------------------------------------
 
 Package: sse-starlette
@@ -493,18 +465,4 @@ Version: 4.0.2
 License: Apache Software License
 Author: Yesudeep Mangalapilly
 URL: https://github.com/gorakhargosh/watchdog
---------------------------------------------------------------------------------
-
-Package: xfile-context
-Version: 0.0.27
-License: Proprietary
-Author: Henru Wang <noreply@example.com>
-URL: UNKNOWN
---------------------------------------------------------------------------------
-
-Package: xfile-context
-Version: 0.0.27
-License: Proprietary
-Author: Henru Wang <noreply@example.com>
-URL: UNKNOWN
 --------------------------------------------------------------------------------

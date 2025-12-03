@@ -60,6 +60,11 @@ PERMISSIBLE_LICENSES = {
     "UNKNOWN",  # Allow unknown licenses with a warning
 }
 
+# Packages to exclude from license checks (this project itself, not third-party)
+EXCLUDED_PACKAGES = {
+    "xfile-context",
+}
+
 
 def run_pip_licenses() -> List[Dict[str, str]]:
     """Run pip-licenses and return the output as a list of dictionaries.
@@ -68,8 +73,14 @@ def run_pip_licenses() -> List[Dict[str, str]]:
         List of dictionaries with package license information
     """
     try:
+        cmd = ["pip-licenses", "--format=json", "--with-authors", "--with-urls"]
+
+        # Exclude this project's own packages (not third-party dependencies)
+        if EXCLUDED_PACKAGES:
+            cmd.extend(["--ignore-packages", *EXCLUDED_PACKAGES])
+
         result = subprocess.run(
-            ["pip-licenses", "--format=json", "--with-authors", "--with-urls"],
+            cmd,
             capture_output=True,
             text=True,
             check=True,
