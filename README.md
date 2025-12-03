@@ -119,7 +119,7 @@ Reads a Python file with automatic cross-file context injection.
 
 **Returns:**
 - `file_path`: The path that was read
-- `content`: File content with injected context (formatted per TDD Section 3.8.3)
+- `content`: File content with injected context (prefixed with `[Cross-File Context]` section)
 - `warnings`: List of any warnings (empty if none)
 
 **Example:**
@@ -183,7 +183,7 @@ enable_warning_logging: true
 metrics_anonymize_paths: false
 ```
 
-See TDD Section 3.10.4 for full configuration reference.
+All configuration options shown above with their default values. Set `enable_context_injection: false` to disable context injection entirely.
 
 ## Quick Start Guide
 
@@ -246,8 +246,8 @@ warn_on_wildcards: true
 
 ### Language Support
 
-- **Python only** (v0.1.0): Only `.py` files are analyzed. Other languages are skipped silently.
-- **Future versions**: Multi-language support planned for v0.2.0+.
+- **Python only**: Only `.py` files are analyzed. Other languages are skipped silently.
+- **Future versions**: Multi-language support planned.
 
 ### Static Analysis Limitations
 
@@ -269,13 +269,13 @@ The analyzer uses AST (Abstract Syntax Tree) parsing and cannot track runtime-de
 
 ### Memory and Performance
 
-- **In-memory only**: Relationship graph is not persisted across sessions (v0.1.0). Each session starts fresh.
+- **In-memory only**: Relationship graph is not persisted across sessions. Each session starts fresh.
 - **Large files**: Files >10,000 lines are skipped and logged as warnings.
 - **Cache size**: Default 50KB limit with LRU eviction. Configurable via `cache_size_limit_kb`.
 
 ### Features Not Yet Implemented
 
-- Cross-session state sharing (planned for v0.2.0)
+- Cross-session state sharing
 - Relationship graph persistence
 - Multi-language support
 - Semantic code search
@@ -309,10 +309,9 @@ pip install -e ".[dev]"
 3. **Non-Python file**: Only `.py` files receive context injection
 
 **Debug steps**:
-```bash
-# Check if relationships exist
-# Use get_relationship_graph tool in Claude Code
-```
+1. Use the `get_relationship_graph` MCP tool to see all detected relationships
+2. Verify the file has imports or is imported by other files
+3. Check if the file is a `.py` file (other extensions are not analyzed)
 
 #### Warnings Not Appearing
 
@@ -336,7 +335,10 @@ pip install -e ".[dev]"
 
 #### Enable Verbose Logging
 
-Check the MCP server logs for detailed diagnostics. Log files are written to the session log directory.
+Check the MCP server logs for detailed diagnostics. Logs are written to:
+- **Injection logs**: `.xfile_context/injection_log.jsonl` in your project directory
+- **Warning logs**: `.xfile_context/warning_log.jsonl` in your project directory
+- **Session metrics**: `.xfile_context/session_metrics.jsonl` (written at session end)
 
 #### Check Session Metrics
 
