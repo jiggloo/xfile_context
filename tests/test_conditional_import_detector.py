@@ -407,3 +407,150 @@ if TYPE_CHECKING:
         # Both imports should have line numbers (4 and 5)
         assert len(line_numbers) == 2
         assert all(ln > 0 for ln in line_numbers)
+
+    def test_malformed_ast_node_gracefully_handled(self):
+        """Test that malformed AST nodes are handled gracefully (EC-18 related).
+
+        When the AST is malformed or has unexpected structure, the detector
+        should skip gracefully without crashing.
+        """
+        from unittest.mock import MagicMock
+
+        detector = ConditionalImportDetector()
+
+        # Create a mock If node with a test that will raise AttributeError
+        malformed_if = MagicMock(spec=ast.If)
+        malformed_if.test = MagicMock()
+        # Make accessing attributes raise AttributeError
+        type(malformed_if.test).id = property(
+            lambda self: (_ for _ in ()).throw(AttributeError("no id"))
+        )
+
+        tree = ast.parse("x = 1")
+
+        # Should not raise, should return empty list
+        relationships = detector.detect(malformed_if, "/test/file.py", tree)
+        assert relationships == []
+
+    def test_malformed_ast_with_type_error(self):
+        """Test that TypeError during condition analysis is handled gracefully."""
+        from unittest.mock import patch
+
+        detector = ConditionalImportDetector()
+
+        # Create a valid If node
+        code = """
+if TYPE_CHECKING:
+    import os
+"""
+        tree = ast.parse(code)
+
+        # Find the If node
+        if_node = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If):
+                if_node = node
+                break
+
+        # Patch _analyze_condition to raise TypeError
+        with patch.object(detector, "_analyze_condition", side_effect=TypeError("test")):
+            relationships = detector.detect(if_node, "/test/file.py", tree)
+            assert relationships == []
+
+
+class TestFallbackCodePaths:
+    """Tests for fallback code paths (low priority for Python 3.10+).
+
+    These tests cover code that exists for robustness but may not execute
+    on Python 3.10+ where ast.unparse is always available.
+    """
+
+    def test_node_to_string_depth_limit(self):
+        """Test that _node_to_string respects max recursion depth."""
+        detector = ConditionalImportDetector()
+
+        # Create a deeply nested attribute access
+        node = ast.Name(id="a")
+        for _ in range(25):  # Exceed max_depth of 20
+            node = ast.Attribute(value=node, attr="x")
+
+        result = detector._node_to_string(node)
+        assert "<too_deep>" in result
+
+    def test_node_to_string_subscript(self):
+        """Test _node_to_string handles Subscript nodes."""
+        detector = ConditionalImportDetector()
+
+        # Create sys.version_info[:2] AST structure
+        code = "sys.version_info[:2]"
+        tree = ast.parse(code, mode="eval")
+        subscript_node = tree.body  # This is the Subscript node
+
+        result = detector._node_to_string(subscript_node)
+        assert "sys.version_info" in result
+        assert "[...]" in result
+
+    def test_node_to_string_tuple(self):
+        """Test _node_to_string handles Tuple nodes."""
+        detector = ConditionalImportDetector()
+
+        # Create a tuple (3, 8)
+        code = "(3, 8)"
+        tree = ast.parse(code, mode="eval")
+        tuple_node = tree.body
+
+        result = detector._node_to_string(tuple_node)
+        assert "3" in result
+        assert "8" in result
+
+    def test_node_to_string_unknown_node_type(self):
+        """Test _node_to_string handles unknown node types."""
+        detector = ConditionalImportDetector()
+
+        # Create a node type that _node_to_string doesn't explicitly handle
+        code = "[1, 2, 3]"  # List node
+        tree = ast.parse(code, mode="eval")
+        list_node = tree.body
+
+        result = detector._node_to_string(list_node)
+        assert result == "<expr>"
+
+    def test_unparse_expr_fallback_with_compare(self):
+        """Test _unparse_expr fallback for Compare nodes.
+
+        Note: On Python 3.10+, ast.unparse is used. This tests the fallback
+        by temporarily removing ast.unparse (if possible) or verifying the
+        primary path works correctly.
+        """
+        detector = ConditionalImportDetector()
+
+        # Create a Compare node: sys.version_info >= (3, 8)
+        code = "sys.version_info >= (3, 8)"
+        tree = ast.parse(code, mode="eval")
+        compare_node = tree.body
+
+        # Test the primary path (ast.unparse available on 3.10+)
+        result = detector._unparse_expr(compare_node)
+        assert "sys.version_info" in result
+        assert ">=" in result
+        assert "3" in result
+        assert "8" in result
+
+    def test_unparse_expr_all_comparison_operators(self):
+        """Test _unparse_expr handles all comparison operators."""
+        detector = ConditionalImportDetector()
+
+        test_cases = [
+            ("a > b", ">"),
+            ("a >= b", ">="),
+            ("a < b", "<"),
+            ("a <= b", "<="),
+            ("a == b", "=="),
+            ("a != b", "!="),
+        ]
+
+        for code, expected_op in test_cases:
+            tree = ast.parse(code, mode="eval")
+            compare_node = tree.body
+            result = detector._unparse_expr(compare_node)
+            assert expected_op in result, f"Failed for {code}"

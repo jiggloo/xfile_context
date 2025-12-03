@@ -172,6 +172,7 @@ class TestCrossFileContextServiceReadFile:
             service.shutdown()
 
 
+@pytest.mark.slow
 class TestCrossFileContextServiceContextInjection:
     """Tests for context injection workflow."""
 
@@ -575,6 +576,7 @@ class TestServiceSecurityValidation:
         service.shutdown()
 
 
+@pytest.mark.slow
 class TestTokenCounting:
     """Tests for token counting functionality (TDD Section 3.8.4)."""
 
@@ -618,6 +620,7 @@ class TestTokenCounting:
             service.shutdown()
 
 
+@pytest.mark.slow
 class TestHighUsageFunctionDetection:
     """Tests for high-usage function detection (FR-19, FR-20)."""
 
@@ -875,6 +878,7 @@ class TestDependencyPrioritization:
             service.shutdown()
 
 
+@pytest.mark.slow
 class TestCrossFileContextServiceIntegration:
     """Integration tests for the full workflow."""
 
@@ -941,6 +945,7 @@ class TestCrossFileContextServiceIntegration:
             service.shutdown()
 
 
+@pytest.mark.slow
 class TestContextInjectionFormatting:
     """Tests for context injection formatting (T-2.2, TDD Section 3.8.3)."""
 
