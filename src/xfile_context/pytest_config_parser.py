@@ -171,7 +171,7 @@ class PytestConfig:
         """
         if tomllib is None:
             logger.warning(
-                "tomli library not available for Python < 3.11, " "cannot parse pyproject.toml"
+                "tomli library not available for Python < 3.11, cannot parse pyproject.toml"
             )
             return False
 

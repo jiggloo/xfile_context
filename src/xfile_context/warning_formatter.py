@@ -30,11 +30,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from .detectors.dynamic_pattern_detector import DynamicPatternType, DynamicPatternWarning
+from xfile_context.detectors.dynamic_pattern_detector import (
+    DynamicPatternType,
+    DynamicPatternWarning,
+)
 
 if TYPE_CHECKING:
-    from .warning_logger import WarningLogger
-    from .warning_suppression import WarningSuppressionManager
+    from xfile_context.warning_logger import WarningLogger
+    from xfile_context.warning_suppression import WarningSuppressionManager
 
 logger = logging.getLogger(__name__)
 

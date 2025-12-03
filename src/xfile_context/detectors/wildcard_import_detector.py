@@ -22,9 +22,9 @@ import ast
 import logging
 from typing import List
 
-from ..models import Relationship
-from .base import RelationshipDetector
-from .import_detector import ImportDetector
+from xfile_context.detectors.base import RelationshipDetector
+from xfile_context.detectors.import_detector import ImportDetector
+from xfile_context.models import Relationship
 
 logger = logging.getLogger(__name__)
 

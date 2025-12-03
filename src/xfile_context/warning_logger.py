@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TextIO
 
-from .warning_formatter import StructuredWarning
+from xfile_context.warning_formatter import StructuredWarning
 
 logger = logging.getLogger(__name__)
 
