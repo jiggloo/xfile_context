@@ -92,6 +92,25 @@ python -m xfile_context
 
 The server runs in stdio mode by default, which is compatible with Claude Code.
 
+#### MCP Inspector (Development)
+
+For development and debugging, you can use the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) to interactively test the server's tools. This requires the `mcp[cli]` package:
+
+```bash
+pip install "mcp[cli]"
+```
+
+Start the MCP Inspector from the repository root:
+
+```bash
+mcp dev src/xfile_context/dev_server.py:mcp
+```
+
+Once started, open http://localhost:6274 in your browser to access the inspector interface. From there you can:
+- View available tools and their schemas
+- Invoke tools interactively with custom arguments
+- Inspect tool responses
+
 #### Programmatic Usage
 
 Use the server in Python code:
