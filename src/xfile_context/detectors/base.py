@@ -13,7 +13,7 @@ import ast
 from abc import ABC, abstractmethod
 from typing import List
 
-from ..models import Relationship
+from xfile_context.models import Relationship
 
 
 class RelationshipDetector(ABC):

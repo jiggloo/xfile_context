@@ -24,12 +24,12 @@ Implementation:
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
-    from .cache import WorkingMemoryCache
-    from .injection_logger import InjectionLogger
-    from .metrics_collector import MetricsCollector
-    from .models import RelationshipGraph
-    from .service import CrossFileContextService
-    from .warning_logger import WarningLogger
+    from xfile_context.cache import WorkingMemoryCache
+    from xfile_context.injection_logger import InjectionLogger
+    from xfile_context.metrics_collector import MetricsCollector
+    from xfile_context.models import RelationshipGraph
+    from xfile_context.service import CrossFileContextService
+    from xfile_context.warning_logger import WarningLogger
 
 
 class QueryAPI:
@@ -139,7 +139,7 @@ class QueryAPI:
             - token_count: Token count of this snippet
             - context_token_total: Cumulative token count
         """
-        from .injection_logger import get_recent_injections
+        from xfile_context.injection_logger import get_recent_injections
 
         log_path = self._injection_logger.get_log_path()
         events = get_recent_injections(log_path, target_file, limit)

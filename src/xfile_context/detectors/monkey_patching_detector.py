@@ -28,7 +28,7 @@ import ast
 import logging
 from typing import Optional, Set
 
-from .dynamic_pattern_detector import (
+from xfile_context.detectors.dynamic_pattern_detector import (
     DynamicPatternDetector,
     DynamicPatternType,
     DynamicPatternWarning,

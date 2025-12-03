@@ -29,8 +29,8 @@ import builtins
 import logging
 from typing import Dict, List, Optional, Set
 
-from ..models import Relationship, RelationshipType
-from .base import RelationshipDetector
+from xfile_context.detectors.base import RelationshipDetector
+from xfile_context.models import Relationship, RelationshipType
 
 logger = logging.getLogger(__name__)
 
@@ -278,7 +278,7 @@ class FunctionCallDetector(RelationshipDetector):
         self._import_map.clear()
 
         # We need to import ImportDetector to use its resolution logic
-        from .import_detector import ImportDetector
+        from xfile_context.detectors.import_detector import ImportDetector
 
         import_detector = ImportDetector()
 

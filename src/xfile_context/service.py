@@ -20,10 +20,10 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import tiktoken
 
-from .analyzers.python_analyzer import PythonAnalyzer
-from .cache import WorkingMemoryCache
-from .config import Config
-from .detectors import (
+from xfile_context.analyzers.python_analyzer import PythonAnalyzer
+from xfile_context.cache import WorkingMemoryCache
+from xfile_context.config import Config
+from xfile_context.detectors import (
     ClassInheritanceDetector,
     ConditionalImportDetector,
     DecoratorDetector,
@@ -36,18 +36,18 @@ from .detectors import (
     MonkeyPatchingDetector,
     WildcardImportDetector,
 )
-from .file_watcher import FileWatcher
-from .graph_updater import GraphUpdater
-from .injection_logger import (
+from xfile_context.file_watcher import FileWatcher
+from xfile_context.graph_updater import GraphUpdater
+from xfile_context.injection_logger import (
     InjectionEvent,
     InjectionLogger,
     InjectionStatistics,
     get_recent_injections,
 )
-from .metrics_collector import MetricsCollector, SessionMetrics
-from .models import Relationship, RelationshipGraph, RelationshipType
-from .storage import GraphExport, InMemoryStore, RelationshipStore
-from .warning_formatter import StructuredWarning, WarningEmitter
+from xfile_context.metrics_collector import MetricsCollector, SessionMetrics
+from xfile_context.models import Relationship, RelationshipGraph, RelationshipType
+from xfile_context.storage import GraphExport, InMemoryStore, RelationshipStore
+from xfile_context.warning_formatter import StructuredWarning, WarningEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -257,7 +257,7 @@ class CrossFileContextService:
 
         # Initialize warning logger for warning event logging (TDD Section 3.9.5)
         # Shares log directory with injection logger and metrics collector
-        from .warning_logger import WarningLogger
+        from xfile_context.warning_logger import WarningLogger
 
         self._warning_logger = WarningLogger(
             log_dir=self._project_root / ".cross_file_context_logs"
@@ -451,8 +451,7 @@ class CrossFileContextService:
             warnings.extend(context_warnings)
 
         logger.debug(
-            f"Read file {file_path} ({len(content)} bytes) with "
-            f"{len(dependencies)} dependencies"
+            f"Read file {file_path} ({len(content)} bytes) with {len(dependencies)} dependencies"
         )
 
         return ReadResult(
@@ -847,14 +846,13 @@ class CrossFileContextService:
                         )
                     else:
                         warnings.append(
-                            f"⚠️ Note: This file imports from {target_path.name} "
-                            f"which was deleted"
+                            f"⚠️ Note: This file imports from {target_path.name} which was deleted"
                         )
             # Also check if file physically exists
             elif not target_path.exists() and rel.target_file not in deleted_files:
                 deleted_files.add(rel.target_file)
                 warnings.append(
-                    f"⚠️ Note: This file imports from {target_path.name} " f"which no longer exists"
+                    f"⚠️ Note: This file imports from {target_path.name} which no longer exists"
                 )
 
         return warnings, deleted_files
@@ -1234,7 +1232,7 @@ class CrossFileContextService:
         Called after analysis to gather warnings from detectors and add them
         to the warning emitter. Clears detector warnings after collection.
         """
-        from .detectors.dynamic_pattern_detector import DynamicPatternDetector
+        from xfile_context.detectors.dynamic_pattern_detector import DynamicPatternDetector
 
         for detector in self._detector_registry.get_detectors():
             if isinstance(detector, DynamicPatternDetector):
