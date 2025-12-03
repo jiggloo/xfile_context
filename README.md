@@ -87,7 +87,7 @@ The Cross-File Context Links MCP Server provides automatic cross-file context in
 Run the MCP server directly:
 
 ```bash
-python -m xfile_context.mcp_server
+python -m xfile_context
 ```
 
 The server runs in stdio mode by default, which is compatible with Claude Code.
@@ -209,7 +209,7 @@ Add to your Claude Code MCP configuration (`~/.config/claude-code/mcp.json` or e
   "mcpServers": {
     "xfile_context": {
       "command": "/path/to/xfile_context/venv/bin/python",
-      "args": ["-m", "xfile_context.mcp_server"]
+      "args": ["-m", "xfile_context"]
     }
   }
 }
