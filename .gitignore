@@ -33,3 +33,6 @@ ENV/
 # Coverage
 .coverage
 htmlcov/
+
+# Logs persisted by this project
+.cross_file_context_logs/
