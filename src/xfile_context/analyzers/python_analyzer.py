@@ -19,11 +19,18 @@ import concurrent.futures
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Tuple
 
 from xfile_context.detectors.dynamic_pattern_detector import DynamicPatternDetector
 from xfile_context.detectors.registry import DetectorRegistry
-from xfile_context.models import FileMetadata, Relationship, RelationshipGraph
+from xfile_context.models import (
+    FileMetadata,
+    FileSymbolData,
+    Relationship,
+    RelationshipGraph,
+    SymbolDefinition,
+    SymbolReference,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -379,3 +386,166 @@ class PythonAnalyzer:
             is_unparseable=True,  # EC-18: Mark as unparseable
         )
         self.graph.set_file_metadata(filepath, metadata)
+
+    # =========================================================================
+    # Two-Phase Analysis Methods (Issue #122)
+    # =========================================================================
+
+    def extract_file_symbols(self, filepath: str) -> Optional[FileSymbolData]:
+        """Extract FileSymbolData from a Python file (Issue #122 Phase 1).
+
+        This method implements the first phase of the two-phase analysis approach:
+        AST -> FileSymbolData
+
+        Uses detectors that support symbol extraction mode to extract all
+        definitions and references from a file without creating relationships.
+
+        Args:
+            filepath: Absolute path to Python file to analyze.
+
+        Returns:
+            FileSymbolData containing all symbols, or None if file couldn't be parsed.
+        """
+        # Stage 1: File Reading
+        file_content = self._read_file(filepath)
+        if file_content is None:
+            return None
+
+        # Stage 2: AST Parsing
+        try:
+            module_ast = self._parse_ast(filepath, file_content)
+            if module_ast is None:
+                return FileSymbolData(
+                    filepath=filepath,
+                    definitions=[],
+                    references=[],
+                    parse_time=time.time(),
+                    is_valid=False,
+                    error_message="Syntax error in file",
+                )
+        except ASTParsingTimeoutError:
+            logger.warning(f"⚠️ Symbol extraction timeout for {filepath} ({self.timeout_seconds}s)")
+            return FileSymbolData(
+                filepath=filepath,
+                definitions=[],
+                references=[],
+                parse_time=time.time(),
+                is_valid=False,
+                error_message=f"AST parsing timeout ({self.timeout_seconds}s)",
+            )
+
+        # Stage 3: Symbol Extraction
+        definitions, references = self._extract_symbols(filepath, module_ast)
+
+        # Collect dynamic pattern info
+        dynamic_pattern_types = self._collect_dynamic_patterns()
+
+        return FileSymbolData(
+            filepath=filepath,
+            definitions=definitions,
+            references=references,
+            parse_time=time.time(),
+            is_valid=True,
+            has_dynamic_patterns=len(dynamic_pattern_types) > 0,
+            dynamic_pattern_types=dynamic_pattern_types if dynamic_pattern_types else None,
+        )
+
+    def _extract_symbols(
+        self, filepath: str, module_ast: ast.Module
+    ) -> Tuple[List[SymbolDefinition], List[SymbolReference]]:
+        """Extract symbols from AST using detectors that support symbol extraction.
+
+        Args:
+            filepath: Path to file being analyzed.
+            module_ast: Root AST node of the module.
+
+        Returns:
+            Tuple of (definitions, references) aggregated from all symbol-enabled detectors.
+        """
+        all_definitions: List[SymbolDefinition] = []
+        all_references: List[SymbolReference] = []
+        detectors = self.detector_registry.get_detectors()
+
+        # Filter to detectors that support symbol extraction
+        symbol_detectors = [d for d in detectors if d.supports_symbol_extraction()]
+
+        def traverse_node(node: ast.AST, depth: int = 0) -> None:
+            """Recursively traverse AST and extract symbols."""
+            if depth > self.max_recursion_depth:
+                logger.warning(
+                    f"⚠️ AST traversal depth limit ({self.max_recursion_depth}) "
+                    f"exceeded in {filepath}, skipping subtree"
+                )
+                return
+
+            # Invoke symbol extraction on all enabled detectors
+            for detector in symbol_detectors:
+                try:
+                    definitions, references = detector.extract_symbols(node, filepath, module_ast)
+                    all_definitions.extend(definitions)
+                    all_references.extend(references)
+                except Exception as e:
+                    logger.error(
+                        f"Error in detector '{detector.name()}' symbol extraction "
+                        f"for {filepath}: {e}"
+                    )
+
+            # Recursively process child nodes
+            for child in ast.iter_child_nodes(node):
+                traverse_node(child, depth + 1)
+
+        traverse_node(module_ast)
+
+        return (all_definitions, all_references)
+
+    def analyze_file_two_phase(
+        self, filepath: str, symbol_data: Optional[FileSymbolData] = None
+    ) -> bool:
+        """Analyze a file using the two-phase approach (Issue #122).
+
+        This method supports both:
+        1. Extract and store: Extract symbols and immediately build relationships
+        2. Build from data: Use pre-extracted FileSymbolData to build relationships
+
+        Args:
+            filepath: Absolute path to Python file to analyze.
+            symbol_data: Optional pre-extracted FileSymbolData. If None, extracts symbols first.
+
+        Returns:
+            True if analysis succeeded, False if file was skipped or failed.
+        """
+        # Phase 1: Get or extract FileSymbolData
+        if symbol_data is None:
+            symbol_data = self.extract_file_symbols(filepath)
+
+        if symbol_data is None:
+            return False
+
+        if not symbol_data.is_valid:
+            self._mark_unparseable(filepath)
+            return False
+
+        # Phase 2: Build relationships from symbol data
+        # For now, we still use the direct detect() approach for relationship creation
+        # since the full relationship builder integration requires more changes.
+        # This method provides a path for future integration.
+
+        # Convert symbol references to relationships using the existing detect() flow
+        # This maintains compatibility while allowing symbol data inspection
+        file_content = self._read_file(filepath)
+        if file_content is None:
+            return False
+
+        try:
+            module_ast = self._parse_ast(filepath, file_content)
+            if module_ast is None:
+                self._mark_unparseable(filepath)
+                return False
+        except ASTParsingTimeoutError:
+            self._mark_unparseable(filepath)
+            return False
+
+        relationships = self._dispatch_detectors(filepath, module_ast)
+        self._store_relationships(filepath, relationships)
+
+        return True

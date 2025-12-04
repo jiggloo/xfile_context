@@ -20,11 +20,11 @@ See TDD Section 3.5.2.6 (EC-4) for detailed specifications.
 
 import ast
 import logging
-from typing import List
+from typing import List, Tuple
 
 from xfile_context.detectors.base import RelationshipDetector
 from xfile_context.detectors.import_detector import ImportDetector
-from xfile_context.models import Relationship
+from xfile_context.models import ReferenceType, Relationship, SymbolDefinition, SymbolReference
 
 logger = logging.getLogger(__name__)
 
@@ -178,3 +178,79 @@ class WildcardImportDetector(RelationshipDetector):
             Detector name: "WildcardImportDetector".
         """
         return "WildcardImportDetector"
+
+    def supports_symbol_extraction(self) -> bool:
+        """Check if this detector supports symbol extraction mode.
+
+        Returns:
+            True - WildcardImportDetector supports symbol extraction.
+        """
+        return True
+
+    def extract_symbols(
+        self,
+        node: ast.AST,
+        filepath: str,
+        module_ast: ast.Module,
+    ) -> Tuple[List[SymbolDefinition], List[SymbolReference]]:
+        """Extract wildcard import references from an AST node (Issue #122).
+
+        WildcardImportDetector only produces references (wildcard imports), not definitions.
+
+        Args:
+            node: AST node to analyze.
+            filepath: Absolute path to the file being analyzed.
+            module_ast: The root AST node of the entire module (for context).
+
+        Returns:
+            Tuple of ([], references) - wildcard imports produce references only.
+        """
+        references: List[SymbolReference] = []
+
+        # Only process ImportFrom nodes (wildcard imports use this pattern)
+        if not isinstance(node, ast.ImportFrom):
+            return ([], references)
+
+        # Check if this is a wildcard import
+        if not self._is_wildcard_import(node):
+            return ([], references)
+
+        # Resolve module path
+        module_name = node.module if node.module else ""
+        level = node.level if node.level else 0
+
+        if level > 0:
+            resolved_module = self._import_detector._resolve_relative_import(
+                module_name, filepath, level
+            )
+        else:
+            resolved_module = self._import_detector._resolve_module(module_name, filepath)
+
+        ref = SymbolReference(
+            name="*",
+            reference_type=ReferenceType.IMPORT,
+            line_number=node.lineno,
+            resolved_module=resolved_module,
+            resolved_symbol="*",
+            module_name=module_name if module_name else f"{'.' * level}",
+            is_relative=(level > 0),
+            relative_level=level,
+            is_wildcard=True,
+            is_conditional=False,
+            metadata={
+                "import_style": "from_import_wildcard",
+                "limitation": "Cannot track which specific names are imported from this module",
+            },
+        )
+        references.append(ref)
+
+        # Emit warning if configured
+        if self._warn_on_wildcards:
+            display_module = module_name if module_name else "<relative>"
+            logger.warning(
+                f"Wildcard import detected in {filepath}:{node.lineno}: "
+                f"from {display_module} import * - "
+                f"Cannot track specific names imported (EC-4)"
+            )
+
+        return ([], references)
