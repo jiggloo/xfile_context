@@ -311,8 +311,11 @@ class TestContextInjection:
         assert "[Cross-File Context]" in result.injected_context
         assert "imports from" in result.injected_context.lower()
 
-        # Verify line numbers are included (helps locate definitions)
-        assert "(line " in result.injected_context or "line " in result.injected_context.lower()
+        # Verify symbols are included (with or without line numbers)
+        # Per Issue #116 Bug 3 fix: Line numbers show definition locations when available,
+        # and are omitted when target_line is None (rather than showing incorrect usage lines)
+        # Check that at least some symbols are mentioned (indicating dependency tracking works)
+        assert "()" in result.injected_context, "Symbol names with () should be present"
 
     def test_t_2_4_injection_disabled_via_config(
         self,
