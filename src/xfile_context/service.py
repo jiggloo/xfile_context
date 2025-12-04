@@ -47,6 +47,7 @@ from xfile_context.injection_logger import (
 from xfile_context.metrics_collector import MetricsCollector, SessionMetrics
 from xfile_context.models import Relationship, RelationshipGraph, RelationshipType
 from xfile_context.relationship_builder import RelationshipBuilder
+from xfile_context.staleness_resolver import StalenessResolver
 from xfile_context.storage import GraphExport, InMemoryStore, RelationshipStore
 from xfile_context.symbol_cache import SymbolDataCache
 from xfile_context.warning_formatter import StructuredWarning, WarningEmitter
@@ -325,6 +326,52 @@ class CrossFileContextService:
 
         return False  # Already analyzed and not modified
 
+    def _resolve_staleness(self, file_path: str) -> None:
+        """Resolve staleness for target file and its transitive dependencies.
+
+        Implements Issue #117 Option B: Full transitive dependency check using
+        topological sort-based staleness resolution.
+
+        This method ensures that:
+        1. The target file is analyzed if stale
+        2. All transitive dependencies are checked for staleness
+        3. Stale files are processed in topological order (dependencies first)
+        4. Files with pending relationships are restored without re-analysis
+
+        Args:
+            file_path: Target file being read via read_file_with_context().
+        """
+        # Create staleness resolver with callbacks to service methods
+        resolver = StalenessResolver(
+            graph=self._graph,
+            needs_analysis=self._needs_analysis,
+            analyze_file=self._analyze_file_for_staleness,
+        )
+
+        # Resolve staleness for target and all transitive dependencies
+        resolver.resolve_staleness(file_path)
+
+    def _analyze_file_for_staleness(self, file_path: str) -> bool:
+        """Analyze a file during staleness resolution (Issue #117 Option B).
+
+        This is a callback used by StalenessResolver to analyze stale files.
+        It uses the appropriate analysis method based on configuration.
+
+        Args:
+            file_path: File to analyze.
+
+        Returns:
+            True if analysis succeeded, False otherwise.
+        """
+        logger.debug(f"Staleness resolution: analyzing {file_path}")
+
+        if self.config.use_two_phase_analysis:
+            return self._analyzer.analyze_file_two_phase(
+                file_path, relationship_builder=self._relationship_builder
+            )
+        else:
+            return self._analyzer.analyze_file(file_path)
+
     def _validate_filepath(self, filepath: str) -> None:
         """Validate filepath for security concerns.
 
@@ -540,23 +587,16 @@ class CrossFileContextService:
                 warnings=warnings,
             )
 
-        # Lazy initialization: analyze target file if needed (Issue #114)
+        # Lazy initialization: analyze target file and stale dependencies (Issue #114, #117)
         # This ensures context is available on first read without requiring
         # eager full-project analysis at startup.
         #
-        # Note: We only analyze the target file, not its dependencies.
-        # Signature extraction for dependencies uses direct file reads via cache,
-        # so dependencies don't need to be analyzed for context injection.
-        # Analyzing dependencies would remove relationships pointing to them,
-        # breaking the context injection.
-        if self._needs_analysis(file_path):
-            logger.debug(f"Lazy analysis: analyzing target file {file_path}")
-            if self.config.use_two_phase_analysis:
-                self._analyzer.analyze_file_two_phase(
-                    file_path, relationship_builder=self._relationship_builder
-                )
-            else:
-                self._analyzer.analyze_file(file_path)
+        # Issue #117 Option B: Use topological sort-based staleness resolution
+        # to handle transitive dependencies correctly. This ensures:
+        # - Modified dependency files are re-analyzed before their dependents
+        # - Files with pending relationships are restored in correct order
+        # - Diamond patterns and complex dependency chains are handled properly
+        self._resolve_staleness(file_path)
 
         # Get dependencies for this file from the graph
         dependencies = self._get_file_dependencies(file_path)

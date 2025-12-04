@@ -411,6 +411,10 @@ class FileMetadata:
     deleted: bool = False  # True if file has been deleted
     deletion_time: Optional[float] = None  # Unix timestamp of deletion
 
+    # Pending relationships tracking (Issue #117 Option B)
+    # True if file's relationships need to be restored without re-analysis
+    pending_relationships: bool = False
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to JSON-compatible dict.
 
@@ -429,6 +433,9 @@ class FileMetadata:
         # Only include deletion_time if it's set
         if self.deletion_time is not None:
             result["deletion_time"] = self.deletion_time
+        # Only include pending_relationships if True (Issue #117 Option B)
+        if self.pending_relationships:
+            result["pending_relationships"] = self.pending_relationships
         return result
 
     @classmethod
@@ -453,6 +460,7 @@ class FileMetadata:
             is_unparseable=data["is_unparseable"],
             deleted=data.get("deleted", False),  # Default False for backward compatibility
             deletion_time=data.get("deletion_time"),  # Default None
+            pending_relationships=data.get("pending_relationships", False),  # Issue #117 Option B
         )
 
 
@@ -807,6 +815,173 @@ class RelationshipGraph:
         self._dependencies.clear()
         self._dependents.clear()
         self._file_metadata.clear()
+
+    # =========================================================================
+    # Issue #117 Option B: Staleness Resolution Support Methods
+    # =========================================================================
+
+    def copy_dependency_graph(self) -> Dict[str, Set[str]]:
+        """Create a copy of the dependency graph for staleness resolution.
+
+        Returns a deep copy of the dependencies index, preserving the graph
+        structure before any relationship removal. This copy is used to
+        determine transitive dependencies when resolving stale files.
+
+        Returns:
+            Dict mapping filepath -> set of files it depends on.
+        """
+        return {filepath: deps.copy() for filepath, deps in self._dependencies.items()}
+
+    def get_transitive_dependencies(
+        self,
+        filepath: str,
+        dependency_graph: Optional[Dict[str, Set[str]]] = None,
+    ) -> Set[str]:
+        """Get all transitive dependencies of a file.
+
+        Performs a breadth-first traversal of the dependency graph to find
+        all files that the given file depends on, directly or transitively.
+
+        Args:
+            filepath: File to find dependencies for.
+            dependency_graph: Optional graph to use (default: current graph).
+                             Pass a copied graph for staleness resolution.
+
+        Returns:
+            Set of all transitive dependency file paths (not including filepath).
+        """
+        graph = dependency_graph if dependency_graph is not None else self._dependencies
+        visited: Set[str] = set()
+        queue: List[str] = [filepath]
+
+        while queue:
+            current = queue.pop(0)
+            if current in visited:
+                continue
+            visited.add(current)
+
+            # Add dependencies to queue
+            deps = graph.get(current, set())
+            for dep in deps:
+                if dep not in visited:
+                    queue.append(dep)
+
+        # Remove the starting file from results
+        visited.discard(filepath)
+        return visited
+
+    def get_direct_dependents(self, filepath: str) -> Set[str]:
+        """Get files that directly depend on the given file.
+
+        Args:
+            filepath: File to find dependents for.
+
+        Returns:
+            Set of files that directly import from filepath.
+        """
+        return self._dependents.get(filepath, set()).copy()
+
+    def store_pending_relationships(self, filepath: str) -> List[Relationship]:
+        """Store relationships for a file before removal (Issue #117 Option B).
+
+        Extracts all relationships where filepath is the source (dependencies)
+        before they are removed from the graph. These can be restored later
+        without re-analyzing the file.
+
+        Args:
+            filepath: File whose outgoing relationships to store.
+
+        Returns:
+            List of relationships where filepath is the source.
+        """
+        return [rel for rel in self._relationships if rel.source_file == filepath]
+
+    def restore_pending_relationships(self, relationships: List[Relationship]) -> None:
+        """Restore previously stored relationships (Issue #117 Option B).
+
+        Re-adds relationships to the graph without requiring re-analysis.
+        Used when a file was marked as pending_relationships but not stale.
+
+        Args:
+            relationships: List of relationships to restore.
+        """
+        for rel in relationships:
+            self.add_relationship(rel)
+
+    def remove_outgoing_relationships(self, filepath: str) -> List[Relationship]:
+        """Remove only outgoing relationships from a file (Issue #117 Option B).
+
+        Unlike remove_relationships_for_file(), this only removes relationships
+        where filepath is the source. Relationships where filepath is the target
+        are preserved. Returns the removed relationships for potential restoration.
+
+        Args:
+            filepath: File whose outgoing relationships to remove.
+
+        Returns:
+            List of removed relationships.
+        """
+        # Find and remove outgoing relationships
+        removed: List[Relationship] = []
+        remaining: List[Relationship] = []
+
+        for rel in self._relationships:
+            if rel.source_file == filepath:
+                removed.append(rel)
+            else:
+                remaining.append(rel)
+
+        self._relationships = remaining
+
+        # Update dependencies index (outgoing edges from this file)
+        if filepath in self._dependencies:
+            # Get the targets before clearing
+            targets = self._dependencies[filepath].copy()
+            # Clear the source's dependencies
+            del self._dependencies[filepath]
+            # Remove this file from dependents of its targets
+            for target in targets:
+                if target in self._dependents:
+                    self._dependents[target].discard(filepath)
+
+        return removed
+
+    def mark_file_pending_relationships(self, filepath: str) -> None:
+        """Mark a file as having pending relationships (Issue #117 Option B).
+
+        The file's relationships have been removed from the graph but can be
+        restored without re-analyzing the file (its content hasn't changed).
+
+        Args:
+            filepath: File to mark as pending.
+        """
+        metadata = self.get_file_metadata(filepath)
+        if metadata is not None:
+            metadata.pending_relationships = True
+
+    def clear_pending_relationships(self, filepath: str) -> None:
+        """Clear the pending_relationships flag for a file (Issue #117 Option B).
+
+        Called after relationships have been restored or rebuilt.
+
+        Args:
+            filepath: File to clear pending flag for.
+        """
+        metadata = self.get_file_metadata(filepath)
+        if metadata is not None:
+            metadata.pending_relationships = False
+
+    def get_files_with_pending_relationships(self) -> List[str]:
+        """Get all files marked as having pending relationships.
+
+        Returns:
+            List of filepaths with pending_relationships=True.
+        """
+        return [
+            filepath
+            for filepath, metadata in self._file_metadata.items()
+            if metadata.pending_relationships
+        ]
 
 
 @dataclass
