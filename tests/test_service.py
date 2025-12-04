@@ -1729,6 +1729,182 @@ class TestLazyInitialization:
 
             service.shutdown()
 
+    def test_lazy_analysis_reanalyzes_modified_dependency(self):
+        """Test that modified dependency files are re-analyzed (Issue #117).
+
+        When a dependency file is modified after being analyzed, reading
+        the target file should trigger re-analysis of the dependency so
+        that new symbols are discovered and included in context.
+
+        Note: Dependencies are only re-analyzed if they were PREVIOUSLY
+        analyzed and are now stale. On first read, dependencies are not
+        analyzed - only the target file is analyzed. The dependency's
+        signature extraction works via direct file reads.
+        """
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            # Create initial files where utils.py imports from base.py
+            base_path = Path(tmpdir) / "base.py"
+            utils_path = Path(tmpdir) / "utils.py"
+            main_path = Path(tmpdir) / "main.py"
+
+            base_path.write_text("def base_helper():\n    return 1\n")
+            utils_path.write_text(
+                "from base import base_helper\n\n" "def helper():\n    return base_helper() + 41\n"
+            )
+            main_path.write_text("from utils import helper\n\nresult = helper()\n")
+
+            # Read utils.py first to establish it as a dependency with metadata
+            # This creates utils.py -> base.py relationship
+            result_utils = service.read_file_with_context(str(utils_path))
+            assert "[Cross-File Context]" in result_utils.injected_context
+
+            # Record the analysis timestamp for utils.py
+            utils_metadata_before = service._graph.get_file_metadata(str(utils_path))
+            assert utils_metadata_before is not None
+            timestamp_before = utils_metadata_before.last_analyzed
+
+            # Now read main.py - this creates main.py -> utils.py relationship
+            result1 = service.read_file_with_context(str(main_path))
+            assert "[Cross-File Context]" in result1.injected_context
+            assert "helper" in result1.injected_context
+
+            # Modify the dependency file (add a new function)
+            import time
+
+            time.sleep(0.1)  # Ensure different mtime
+            utils_path.write_text(
+                "from base import base_helper\n\n"
+                "def helper():\n    return base_helper() + 41\n\n"
+                "def new_function():\n    return 100\n"
+            )
+
+            # Read main.py again - should re-analyze the modified dependency
+            service.read_file_with_context(str(main_path))
+
+            # Verify utils.py was re-analyzed (timestamp changed)
+            utils_metadata_after = service._graph.get_file_metadata(str(utils_path))
+            assert utils_metadata_after is not None
+            assert utils_metadata_after.last_analyzed > timestamp_before
+
+            service.shutdown()
+
+    def test_lazy_analysis_skips_unmodified_dependencies(self):
+        """Test that unmodified dependencies are not re-analyzed.
+
+        When dependencies haven't changed, reading the target file should
+        not trigger re-analysis of dependencies.
+        """
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            # Create files - utils.py imports from base.py
+            base_path = Path(tmpdir) / "base.py"
+            utils_path = Path(tmpdir) / "utils.py"
+            main_path = Path(tmpdir) / "main.py"
+
+            base_path.write_text("def base_helper():\n    return 1\n")
+            utils_path.write_text(
+                "from base import base_helper\n\n" "def helper():\n    return base_helper() + 41\n"
+            )
+            main_path.write_text("from utils import helper\n\nresult = helper()\n")
+
+            # Read utils.py first to establish its metadata
+            service.read_file_with_context(str(utils_path))
+
+            # Then read main.py to establish the main.py -> utils.py relationship
+            service.read_file_with_context(str(main_path))
+
+            # Record analysis timestamps
+            utils_metadata_before = service._graph.get_file_metadata(str(utils_path))
+            main_metadata_before = service._graph.get_file_metadata(str(main_path))
+            assert utils_metadata_before is not None
+            assert main_metadata_before is not None
+
+            # Read main.py again without modifications
+            service.read_file_with_context(str(main_path))
+
+            # Verify neither file was re-analyzed
+            utils_metadata_after = service._graph.get_file_metadata(str(utils_path))
+            main_metadata_after = service._graph.get_file_metadata(str(main_path))
+
+            assert utils_metadata_after.last_analyzed == utils_metadata_before.last_analyzed
+            assert main_metadata_after.last_analyzed == main_metadata_before.last_analyzed
+
+            service.shutdown()
+
+    def test_lazy_analysis_skips_special_marker_dependencies(self):
+        """Test that stdlib/third-party markers are not checked for re-analysis.
+
+        Special marker paths like <stdlib:os> should be skipped when
+        checking for modified dependencies.
+        """
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            # Create a file that imports stdlib
+            main_path = Path(tmpdir) / "main.py"
+            main_path.write_text("import os\nimport sys\n\nprint(os.getcwd())\n")
+
+            # Read file - should not crash when encountering stdlib markers
+            result = service.read_file_with_context(str(main_path))
+
+            # Should complete without errors
+            assert result.content is not None
+
+            service.shutdown()
+
+    def test_lazy_analysis_reanalyzes_dependency_with_new_import(self):
+        """Test that new imports in dependencies are discovered (Issue #117 Scenario 1).
+
+        When a dependency adds a new function that the target file uses,
+        the new function should appear in the injected context.
+        """
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            # Create initial files
+            base_path = Path(tmpdir) / "base.py"
+            detector_path = Path(tmpdir) / "detector.py"
+
+            base_path.write_text("def existing_function():\n    return 1\n")
+            detector_path.write_text(
+                "from base import existing_function\n\n" "result = existing_function()\n"
+            )
+
+            # First read - establishes initial relationships
+            result1 = service.read_file_with_context(str(detector_path))
+            assert "[Cross-File Context]" in result1.injected_context
+            assert "existing_function" in result1.injected_context
+
+            # Add new function to base.py
+            import time
+
+            time.sleep(0.1)  # Ensure different mtime
+            base_path.write_text(
+                "def existing_function():\n    return 1\n\n" "def my_function():\n    return 42\n"
+            )
+
+            # Update detector.py to use the new function
+            time.sleep(0.1)
+            detector_path.write_text(
+                "from base import existing_function, my_function\n\n"
+                "result = existing_function() + my_function()\n"
+            )
+
+            # Second read - should re-analyze both files and include new function
+            result2 = service.read_file_with_context(str(detector_path))
+
+            # The context should include my_function from base.py
+            assert "my_function" in result2.injected_context
+
+            service.shutdown()
+
 
 class TestSpecialMarkerPathHandling:
     """Tests for special marker path handling (Issue #116 Bug 2).

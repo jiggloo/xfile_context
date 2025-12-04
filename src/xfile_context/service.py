@@ -306,6 +306,50 @@ class CrossFileContextService:
 
         return False  # Already analyzed and not modified
 
+    def _dependency_needs_reanalysis(self, file_path: str) -> bool:
+        """Check if a dependency file needs re-analysis (Issue #117).
+
+        Unlike _needs_analysis(), this method only returns True if:
+        - File exists AND
+        - File has metadata (was previously analyzed) AND
+        - File was modified since last analysis (mtime > last_analyzed)
+
+        Returns False if:
+        - File doesn't exist
+        - File has never been analyzed (no metadata)
+        - File was not modified since last analysis
+
+        This distinction is critical because analyze_file() removes ALL
+        relationships involving the file (both as source AND target).
+        For dependencies that were never analyzed, we skip re-analysis
+        because signature extraction works via direct file reads.
+
+        Args:
+            file_path: Path to dependency file to check.
+
+        Returns:
+            True if dependency was previously analyzed and is now stale.
+        """
+        path = Path(file_path)
+        if not path.exists():
+            return False
+
+        metadata = self._graph.get_file_metadata(file_path)
+
+        # Only re-analyze if PREVIOUSLY analyzed (has metadata)
+        if metadata is None:
+            return False  # Never analyzed - don't trigger analysis
+
+        # Check if modified since last analysis
+        try:
+            file_mtime = path.stat().st_mtime
+            if file_mtime > metadata.last_analyzed:
+                return True  # Modified since last analysis
+        except OSError:
+            return False  # Can't stat file, skip
+
+        return False  # Not modified
+
     def _validate_filepath(self, filepath: str) -> None:
         """Validate filepath for security concerns.
 
@@ -486,18 +530,38 @@ class CrossFileContextService:
         # Lazy initialization: analyze target file if needed (Issue #114)
         # This ensures context is available on first read without requiring
         # eager full-project analysis at startup.
-        #
-        # Note: We only analyze the target file, not its dependencies.
-        # Signature extraction for dependencies uses direct file reads via cache,
-        # so dependencies don't need to be analyzed for context injection.
-        # Analyzing dependencies would remove relationships pointing to them,
-        # breaking the context injection.
         if self._needs_analysis(file_path):
             logger.debug(f"Lazy analysis: analyzing target file {file_path}")
             self._analyzer.analyze_file(file_path)
 
         # Get dependencies for this file from the graph
         dependencies = self._get_file_dependencies(file_path)
+
+        # Check and re-analyze modified dependencies (Issue #117)
+        # Direct dependencies may have been modified since last analysis,
+        # which could add new symbols that the target file uses.
+        # Re-analyzing dependencies ensures fresh context injection.
+        #
+        # IMPORTANT: Only re-analyze dependencies that were PREVIOUSLY analyzed
+        # and are now stale (modified since last analysis). Never analyze
+        # dependencies that have never been analyzed, because analyze_file()
+        # removes relationships pointing TO the file, which would break context.
+        # Unanalyzed dependencies work fine for context injection because
+        # signature extraction uses direct file reads via cache.
+        reanalyzed_any = False
+        for dep in dependencies:
+            # Skip special markers (stdlib, third-party, unresolved, etc.)
+            if dep.target_file.startswith("<") and dep.target_file.endswith(">"):
+                continue
+            if self._dependency_needs_reanalysis(dep.target_file):
+                logger.debug(f"Lazy analysis: re-analyzing modified dependency {dep.target_file}")
+                self._analyzer.analyze_file(dep.target_file)
+                reanalyzed_any = True
+
+        # Re-query dependencies after re-analyzing modified dependencies
+        # because the re-analysis may have discovered new relationships
+        if reanalyzed_any:
+            dependencies = self._get_file_dependencies(file_path)
 
         if dependencies:
             # Assemble and format context
