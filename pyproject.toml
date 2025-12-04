@@ -79,9 +79,10 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
 # pytest-xdist parallel execution configuration
-# Use: pytest -n auto --dist=loadfile
+# Use: pytest -n 2 --dist=loadfile
 # - loadfile ensures all tests in a file run on the same worker
 # - This is safe for module-scoped fixtures
+# - Using -n 2 for stability (auto can cause timing-sensitive test failures)
 
 [tool.mypy]
 mypy_path = "src"
