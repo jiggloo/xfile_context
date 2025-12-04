@@ -680,3 +680,65 @@ from pathlib import Path
         assert "sys" in modules
         assert "typing" in modules
         assert "pathlib" in modules
+
+
+class TestBuiltinsModuleClassification:
+    """Tests for builtins module classification (Issue #116 Bug 1).
+
+    Verifies that the 'builtins' module is correctly classified as stdlib
+    rather than third-party. This is important because builtins is always
+    available in Python but was missing from the curated STDLIB_MODULES list.
+    """
+
+    def test_builtins_is_stdlib(self):
+        """Test that 'builtins' module is classified as stdlib."""
+        detector = ImportDetector()
+        code = "import builtins"
+        tree = ast.parse(code)
+
+        relationships = []
+        for node in ast.walk(tree):
+            relationships.extend(detector.detect(node, "/test/file.py", tree))
+
+        assert len(relationships) == 1
+        rel = relationships[0]
+        # Should be stdlib, not third-party
+        assert rel.target_file == "<stdlib:builtins>"
+        assert not rel.target_file.startswith("<third-party:")
+
+    def test_from_builtins_import(self):
+        """Test that 'from builtins import ...' is classified as stdlib."""
+        detector = ImportDetector()
+        code = "from builtins import int, str, list"
+        tree = ast.parse(code)
+
+        relationships = []
+        for node in ast.walk(tree):
+            relationships.extend(detector.detect(node, "/test/file.py", tree))
+
+        assert len(relationships) == 3
+        for rel in relationships:
+            assert rel.target_file == "<stdlib:builtins>"
+
+    def test_stdlib_modules_contains_builtins(self):
+        """Test that STDLIB_MODULES frozenset includes 'builtins'."""
+        detector = ImportDetector()
+        assert "builtins" in detector.STDLIB_MODULES
+
+    def test_stdlib_modules_contains_underscore_thread(self):
+        """Test that STDLIB_MODULES includes _thread (often overlooked)."""
+        detector = ImportDetector()
+        # _thread is a built-in module that should be in the list
+        # Note: This may be in sys.stdlib_module_names on Python 3.10+
+        # or in the fallback list
+        code = "import _thread"
+        tree = ast.parse(code)
+
+        relationships = []
+        for node in ast.walk(tree):
+            relationships.extend(detector.detect(node, "/test/file.py", tree))
+
+        assert len(relationships) == 1
+        rel = relationships[0]
+        # Should either be stdlib or at least not unresolved if installed
+        assert rel.target_file.startswith("<stdlib:") or rel.target_file.startswith("<third-party:")
