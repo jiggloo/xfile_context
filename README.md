@@ -94,15 +94,25 @@ The server runs in stdio mode by default, which is compatible with Claude Code.
 
 #### MCP Inspector (Development)
 
-For development and debugging, you can use the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) to interactively test the server's tools. This requires the `mcp[cli]` package:
+For development and debugging, you can use the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) to interactively test the server's tools. This requires:
 
+1. The `mcp[cli]` package:
 ```bash
 pip install "mcp[cli]"
 ```
 
-Start the MCP Inspector from the repository root:
+2. The `uv` package manager (used internally by `mcp dev`):
+```bash
+pip install uv
+```
+
+Start the MCP Inspector from the repository root. If you're using `virtualenvwrapper` or another tool that manages virtual environments outside of `.venv/`, set `UV_PROJECT_ENVIRONMENT` to point to your active virtual environment:
 
 ```bash
+# If using virtualenvwrapper or similar (VIRTUAL_ENV is set)
+UV_PROJECT_ENVIRONMENT=${VIRTUAL_ENV} mcp dev src/xfile_context/dev_server.py:mcp
+
+# If using the default .venv/ directory
 mcp dev src/xfile_context/dev_server.py:mcp
 ```
 
@@ -110,6 +120,8 @@ Once started, open http://localhost:6274 in your browser to access the inspector
 - View available tools and their schemas
 - Invoke tools interactively with custom arguments
 - Inspect tool responses
+
+**Note**: The `mcp dev` command may create a `uv.lock` file. This file is ignored by version control and can be safely deleted.
 
 #### Programmatic Usage
 
