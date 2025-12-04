@@ -79,11 +79,21 @@ class StalenessResolver:
         4. Remove relationships and mark dependents as pending
         5. Analyze/restore files in topological order
 
+        Example Scenarios:
+        - Diamond pattern: A -> B, A -> C, B -> D, C -> D
+          If D is stale, D is processed first, then B and C, then A.
+        - Transitive staleness: A -> B -> C
+          If C is stale, C is processed before B, then B before A.
+        - Partial staleness: A -> B -> C where A and C are stale but not B
+          C is processed first, then A. B's relationships are restored.
+
         Args:
             target_file: File being read via read_with_context().
 
         Returns:
-            True if resolution succeeded, False if any critical errors occurred.
+            True if resolution succeeded, False if any file analysis failed.
+            Note: Processing continues even if some files fail; the return
+            value indicates if ALL files were processed successfully.
         """
         logger.debug(f"Starting staleness resolution for {target_file}")
 
@@ -142,8 +152,9 @@ class StalenessResolver:
         transitive_deps = self.graph.get_transitive_dependencies(target_file, dependency_graph)
 
         # Check each dependency for staleness
+        # Skip special marker paths like <stdlib:os>, <third-party:requests>
+        # These represent external dependencies that cannot be analyzed
         for dep in transitive_deps:
-            # Skip special marker paths (<stdlib:...>, <third-party:...>, etc.)
             if dep.startswith("<") and dep.endswith(">"):
                 continue
 
@@ -185,8 +196,18 @@ class StalenessResolver:
                 if dep in stale_files:
                     stale_deps[stale_file].add(dep)
 
-        # Kahn's algorithm for topological sort
-        # in_degree[f] = number of stale dependencies that f depends on (must process first)
+        # Kahn's algorithm for topological sort:
+        # 1. Calculate in-degree for each node (number of stale dependencies it has)
+        # 2. Start with nodes that have no stale dependencies (in-degree = 0)
+        # 3. Process each node, decrementing in-degree of files that depend on it
+        # 4. Add nodes with in-degree = 0 to queue
+        # 5. Repeat until all nodes processed
+        #
+        # Example: For A -> B -> C (all stale), returns [C, B, A]
+        # because C has no stale deps, B depends on C, A depends on B.
+        #
+        # Performance note: O(N² × E) worst case where N = stale files, E = edges.
+        # For v0.1.0 target scale (10K files), this is acceptable (~100-500ms worst case).
         in_degree: Dict[str, int] = {f: len(stale_deps[f]) for f in stale_files}
 
         # Start with files that have no stale dependencies (they can be processed first)
@@ -194,12 +215,12 @@ class StalenessResolver:
         result: List[str] = []
 
         while queue:
-            # Sort queue for deterministic ordering
+            # Sort queue for deterministic ordering (helps with testing/debugging)
             queue.sort()
             current = queue.pop(0)
             result.append(current)
 
-            # For each file that depends on current (current is in their deps)
+            # Decrement in-degree for files that depend on current
             for stale_file in stale_files:
                 if current in stale_deps[stale_file]:
                     in_degree[stale_file] -= 1
@@ -336,15 +357,19 @@ class StalenessResolver:
         """Process files in topological order (analyze or restore).
 
         For each file:
-        - If stale: Re-analyze the file
+        - If stale: Re-analyze the file via analyze_file callback
         - If pending (not stale): Restore relationships from storage
 
+        Processing continues even if individual files fail, ensuring maximum
+        recovery. Failed files are logged but don't stop subsequent processing.
+
         Args:
-            files_to_process: Files in topological order.
+            files_to_process: Files in topological order (dependencies first).
             stale_files: Set of files that need re-analysis.
 
         Returns:
-            True if all files processed successfully, False on any error.
+            True if ALL files processed successfully, False if ANY failed.
+            Note: Even on False return, all files were attempted.
         """
         success = True
 
