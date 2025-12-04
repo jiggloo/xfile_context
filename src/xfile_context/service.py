@@ -1532,6 +1532,12 @@ class CrossFileContextService:
         # Clear graph
         self._graph.clear()
 
+        # Clear RelationshipBuilder if using two-phase analysis (Issue #125)
+        # This prevents memory accumulation in long-running sessions
+        if self._relationship_builder is not None:
+            self._relationship_builder.clear()
+            self._relationship_builder = None
+
         # Close injection logger (ensures final flush)
         self._injection_logger.close()
 

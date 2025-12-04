@@ -19,7 +19,7 @@ import concurrent.futures
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from xfile_context.detectors.dynamic_pattern_detector import DynamicPatternDetector
 from xfile_context.detectors.registry import DetectorRegistry
@@ -590,7 +590,7 @@ class PythonAnalyzer:
         failed_count = 0
 
         # Phase 1: Extract symbol data from all files
-        symbol_data_map: dict[str, FileSymbolData] = {}
+        symbol_data_map: Dict[str, FileSymbolData] = {}
         for filepath in filepaths:
             symbol_data = self.extract_file_symbols(filepath)
             if symbol_data is not None and symbol_data.is_valid:
