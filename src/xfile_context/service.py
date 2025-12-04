@@ -48,6 +48,7 @@ from xfile_context.metrics_collector import MetricsCollector, SessionMetrics
 from xfile_context.models import Relationship, RelationshipGraph, RelationshipType
 from xfile_context.relationship_builder import RelationshipBuilder
 from xfile_context.storage import GraphExport, InMemoryStore, RelationshipStore
+from xfile_context.symbol_cache import SymbolDataCache
 from xfile_context.warning_formatter import StructuredWarning, WarningEmitter
 
 logger = logging.getLogger(__name__)
@@ -271,6 +272,16 @@ class CrossFileContextService:
             self._relationship_builder = RelationshipBuilder()
             logger.info("Two-phase analysis mode enabled")
 
+        # Initialize SymbolDataCache for incremental analysis (Issue #125 Phase 3)
+        self._symbol_cache: Optional[SymbolDataCache] = None
+        if self.config.use_two_phase_analysis and self.config.enable_symbol_cache:
+            self._symbol_cache = SymbolDataCache(
+                max_entries=self.config.symbol_cache_max_entries,
+            )
+            logger.info(
+                f"Symbol cache enabled (max {self.config.symbol_cache_max_entries} entries)"
+            )
+
         logger.info(f"CrossFileContextService initialized with project_root={self._project_root}")
 
     def _needs_analysis(self, file_path: str) -> bool:
@@ -433,11 +444,19 @@ class CrossFileContextService:
         if self.config.use_two_phase_analysis:
             # Two-phase analysis: Extract all symbols first, then build relationships
             # This provides better cross-file resolution
+            # Pass symbol cache for incremental analysis (Issue #125 Phase 3)
             success, failed, self._relationship_builder = self._analyzer.analyze_project_two_phase(
-                files_to_analyze, relationship_builder=self._relationship_builder
+                files_to_analyze,
+                relationship_builder=self._relationship_builder,
+                symbol_cache=self._symbol_cache,
             )
             stats["success"] = success
             stats["failed"] = failed
+            # Add cache statistics if available
+            if self._symbol_cache is not None:
+                cache_stats = self._symbol_cache.get_statistics()
+                stats["cache_hits"] = cache_stats["hits"]
+                stats["cache_hit_rate"] = cache_stats["hit_rate"]
         else:
             # Direct analysis: Analyze each file independently
             for file_path in files_to_analyze:
@@ -1472,6 +1491,24 @@ class CrossFileContextService:
         """
         return self._injection_logger.get_log_path()
 
+    def get_symbol_cache_statistics(self) -> Optional[Dict[str, Any]]:
+        """Get symbol cache statistics for monitoring.
+
+        Returns statistics about the symbol cache including:
+        - entries: Current number of cached files
+        - max_entries: Maximum cache size
+        - hits: Number of cache hits
+        - misses: Number of cache misses
+        - hit_rate: Cache hit rate (0.0 to 1.0)
+        - invalidations: Number of cache invalidations
+
+        Returns:
+            Dictionary with cache statistics, or None if cache not enabled.
+        """
+        if self._symbol_cache is None:
+            return None
+        return self._symbol_cache.get_statistics()
+
     def get_session_metrics(self) -> SessionMetrics:
         """Get current session metrics without writing to file.
 
@@ -1537,6 +1574,11 @@ class CrossFileContextService:
         if self._relationship_builder is not None:
             self._relationship_builder.clear()
             self._relationship_builder = None
+
+        # Clear SymbolDataCache if using incremental analysis (Issue #125 Phase 3)
+        if self._symbol_cache is not None:
+            self._symbol_cache.invalidate_all()
+            self._symbol_cache = None
 
         # Close injection logger (ensures final flush)
         self._injection_logger.close()
