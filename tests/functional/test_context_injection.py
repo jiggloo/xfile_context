@@ -376,10 +376,11 @@ class TestContextInjection:
         self,
         default_config: Config,
     ) -> None:
-        """T-2.5: Verify injection requires prior analysis.
+        """T-2.5: Verify injection provides context via lazy initialization.
 
-        Tests that context injection only provides meaningful context
-        after the relationship graph has been populated via analysis.
+        With lazy initialization (Issue #114), context is available on the first
+        read without requiring explicit prior analysis. The file is analyzed
+        on-demand when read_file_with_context is called.
         """
         # Create a fresh service without prior analysis
         service = CrossFileContextService(
@@ -387,36 +388,25 @@ class TestContextInjection:
             project_root=str(TEST_CODEBASE_PATH),
         )
 
-        # Read a file before analysis
-        result_before = service.read_file_with_context(
+        # Read a file - lazy initialization analyzes it on-demand
+        result = service.read_file_with_context(
             str(TEST_CODEBASE_PATH / "core" / "services" / "order_service.py")
         )
 
-        # Context should be empty or minimal before analysis
-        # (no relationships in the graph yet)
-        context_before = result_before.injected_context
+        # Context should be available on first read due to lazy initialization
+        context = result.injected_context
 
-        # Now analyze the codebase
-        service.analyze_directory(str(TEST_CODEBASE_PATH))
+        # Verify context is present and contains expected elements
+        assert "[Cross-File Context]" in context, "Context header should be present"
+        assert "This file imports from:" in context, "Import summary should be present"
+        # order_service.py imports from order.py, product.py, user.py, etc.
+        assert "order.py" in context, "Should show dependency on order.py"
 
-        # Read the same file after analysis
-        result_after = service.read_file_with_context(
-            str(TEST_CODEBASE_PATH / "core" / "services" / "order_service.py")
-        )
-
-        # Context should now contain meaningful dependency information
-        context_after = result_after.injected_context
-
-        # After analysis, context should be richer
-        # (This validates timing - injection uses current graph state)
-        if context_before:
-            # If there was some context before, there should be more after
-            assert len(context_after) >= len(
-                context_before
-            ), "Context should be at least as rich after analysis"
-        else:
-            # If no context before, there should be context after
-            assert context_after, "Context should be present after analysis"
+        # Verify the file was analyzed (has metadata in graph)
+        file_path = str(TEST_CODEBASE_PATH / "core" / "services" / "order_service.py")
+        metadata = service._graph.get_file_metadata(file_path)
+        assert metadata is not None, "File should have metadata after lazy analysis"
+        assert metadata.last_analyzed > 0, "Analysis timestamp should be set"
 
     def test_t_2_5_context_reflects_current_graph_state(
         self,
