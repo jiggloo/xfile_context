@@ -44,6 +44,8 @@ class Config:
         "metrics_anonymize_paths": False,
         "enable_injection_logging": True,
         "enable_warning_logging": True,
+        # Two-phase analysis configuration (Issue #125)
+        "use_two_phase_analysis": False,  # Default to direct mode for backwards compatibility
     }
 
     def __init__(self, config_path: Optional[Path] = None):
@@ -284,5 +286,24 @@ class Config:
     def enable_warning_logging(self) -> bool:
         """Whether warning logging is enabled."""
         value = self._config["enable_warning_logging"]
+        assert isinstance(value, bool)
+        return value
+
+    @property
+    def use_two_phase_analysis(self) -> bool:
+        """Whether to use two-phase analysis mode.
+
+        Two-phase analysis (Issue #125):
+        - Phase 1: AST -> FileSymbolData (extract symbols)
+        - Phase 2: FileSymbolData -> Relationships (via RelationshipBuilder)
+
+        Benefits:
+        - Better cross-file resolution
+        - Foundation for incremental analysis
+        - Symbol data inspection independent of relationships
+
+        Default is False for backwards compatibility with direct analysis mode.
+        """
+        value = self._config["use_two_phase_analysis"]
         assert isinstance(value, bool)
         return value

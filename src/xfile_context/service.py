@@ -46,6 +46,7 @@ from xfile_context.injection_logger import (
 )
 from xfile_context.metrics_collector import MetricsCollector, SessionMetrics
 from xfile_context.models import Relationship, RelationshipGraph, RelationshipType
+from xfile_context.relationship_builder import RelationshipBuilder
 from xfile_context.storage import GraphExport, InMemoryStore, RelationshipStore
 from xfile_context.warning_formatter import StructuredWarning, WarningEmitter
 
@@ -263,6 +264,13 @@ class CrossFileContextService:
             log_dir=self._project_root / ".cross_file_context_logs"
         )
 
+        # Initialize RelationshipBuilder for two-phase analysis (Issue #125)
+        # The builder is shared across files for cross-file symbol resolution
+        self._relationship_builder: Optional[RelationshipBuilder] = None
+        if self.config.use_two_phase_analysis:
+            self._relationship_builder = RelationshipBuilder()
+            logger.info("Two-phase analysis mode enabled")
+
         logger.info(f"CrossFileContextService initialized with project_root={self._project_root}")
 
     def _needs_analysis(self, file_path: str) -> bool:
@@ -359,6 +367,8 @@ class CrossFileContextService:
     def analyze_file(self, file_path: str) -> bool:
         """Analyze a single file and add its relationships to the graph.
 
+        Uses two-phase analysis when use_two_phase_analysis config is enabled (Issue #125).
+
         Args:
             file_path: Path to Python file to analyze.
 
@@ -366,7 +376,15 @@ class CrossFileContextService:
             True if analysis succeeded, False otherwise.
         """
         self._validate_filepath(file_path)
-        result = self._analyzer.analyze_file(file_path)
+
+        if self.config.use_two_phase_analysis:
+            # Two-phase analysis: AST -> FileSymbolData -> Relationships
+            result = self._analyzer.analyze_file_two_phase(
+                file_path, relationship_builder=self._relationship_builder
+            )
+        else:
+            # Direct analysis: AST -> Relationships (original flow)
+            result = self._analyzer.analyze_file(file_path)
 
         # Collect warnings from dynamic pattern detectors
         self._collect_detector_warnings()
@@ -376,6 +394,11 @@ class CrossFileContextService:
     def analyze_directory(self, directory_path: Optional[str] = None) -> Dict[str, Any]:
         """Analyze all Python files in a directory.
 
+        Uses two-phase analysis when use_two_phase_analysis config is enabled (Issue #125).
+        Two-phase directory analysis provides better cross-file resolution by:
+        1. Extracting symbol data from all files first
+        2. Building relationships with full project context
+
         Args:
             directory_path: Path to directory (default: project_root).
 
@@ -384,7 +407,7 @@ class CrossFileContextService:
         """
         dir_path = Path(directory_path) if directory_path else self._project_root
 
-        stats = {
+        stats: Dict[str, Any] = {
             "total": 0,
             "success": 0,
             "failed": 0,
@@ -394,6 +417,8 @@ class CrossFileContextService:
 
         start_time = time.time()
 
+        # Collect files to analyze
+        files_to_analyze: List[str] = []
         for py_file in dir_path.rglob("*.py"):
             file_path = str(py_file)
 
@@ -402,24 +427,37 @@ class CrossFileContextService:
                 stats["skipped"] += 1
                 continue
 
+            files_to_analyze.append(file_path)
             stats["total"] += 1
 
-            try:
-                if self._analyzer.analyze_file(file_path):
-                    stats["success"] += 1
-                else:
+        if self.config.use_two_phase_analysis:
+            # Two-phase analysis: Extract all symbols first, then build relationships
+            # This provides better cross-file resolution
+            success, failed, self._relationship_builder = self._analyzer.analyze_project_two_phase(
+                files_to_analyze, relationship_builder=self._relationship_builder
+            )
+            stats["success"] = success
+            stats["failed"] = failed
+        else:
+            # Direct analysis: Analyze each file independently
+            for file_path in files_to_analyze:
+                try:
+                    if self._analyzer.analyze_file(file_path):
+                        stats["success"] += 1
+                    else:
+                        stats["failed"] += 1
+                except Exception as e:
+                    logger.error(f"Error analyzing {file_path}: {e}")
                     stats["failed"] += 1
-            except Exception as e:
-                logger.error(f"Error analyzing {file_path}: {e}")
-                stats["failed"] += 1
 
         stats["elapsed_ms"] = (time.time() - start_time) * 1000
 
         # Collect warnings from dynamic pattern detectors
         self._collect_detector_warnings()
 
+        analysis_mode = "two-phase" if self.config.use_two_phase_analysis else "direct"
         logger.info(
-            f"Analyzed {stats['total']} files in {stats['elapsed_ms']:.1f}ms: "
+            f"Analyzed {stats['total']} files ({analysis_mode}) in {stats['elapsed_ms']:.1f}ms: "
             f"{stats['success']} success, {stats['failed']} failed, {stats['skipped']} skipped"
         )
 
@@ -494,7 +532,12 @@ class CrossFileContextService:
         # breaking the context injection.
         if self._needs_analysis(file_path):
             logger.debug(f"Lazy analysis: analyzing target file {file_path}")
-            self._analyzer.analyze_file(file_path)
+            if self.config.use_two_phase_analysis:
+                self._analyzer.analyze_file_two_phase(
+                    file_path, relationship_builder=self._relationship_builder
+                )
+            else:
+                self._analyzer.analyze_file(file_path)
 
         # Get dependencies for this file from the graph
         dependencies = self._get_file_dependencies(file_path)
