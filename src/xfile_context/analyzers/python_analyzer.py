@@ -19,7 +19,7 @@ import concurrent.futures
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from xfile_context.detectors.dynamic_pattern_detector import DynamicPatternDetector
 from xfile_context.detectors.registry import DetectorRegistry
@@ -31,6 +31,7 @@ from xfile_context.models import (
     SymbolDefinition,
     SymbolReference,
 )
+from xfile_context.relationship_builder import RelationshipBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -510,22 +511,27 @@ class PythonAnalyzer:
         return (all_definitions, all_references)
 
     def analyze_file_two_phase(
-        self, filepath: str, symbol_data: Optional[FileSymbolData] = None
+        self,
+        filepath: str,
+        symbol_data: Optional[FileSymbolData] = None,
+        relationship_builder: Optional[RelationshipBuilder] = None,
     ) -> bool:
-        """Analyze a file using the two-phase approach (Issue #122).
+        """Analyze a file using the two-phase approach (Issue #122, #125).
 
-        This method supports both:
-        1. Extract and store: Extract symbols and immediately build relationships
-        2. Build from data: Use pre-extracted FileSymbolData to build relationships
+        This method implements the full two-phase analysis:
+        Phase 1: AST -> FileSymbolData (via extract_file_symbols)
+        Phase 2: FileSymbolData -> Relationships (via RelationshipBuilder)
 
-        Note: This method currently provides Phase 1 (symbol extraction) but falls back
-        to the original detect() approach for Phase 2 (relationship creation). Full
-        RelationshipBuilder integration is a future enhancement. The method exists to
-        allow symbol data inspection and provide a migration path.
+        This approach enables:
+        - Incremental analysis (reuse symbol data for unchanged files)
+        - Better cross-file resolution (RelationshipBuilder can resolve across files)
+        - Symbol data inspection independent of relationship creation
 
         Args:
             filepath: Absolute path to Python file to analyze.
             symbol_data: Optional pre-extracted FileSymbolData. If None, extracts symbols first.
+            relationship_builder: Optional RelationshipBuilder to use for cross-file resolution.
+                                  If None, creates a single-file builder (less accurate).
 
         Returns:
             True if analysis succeeded, False if file was skipped or failed.
@@ -541,27 +547,66 @@ class PythonAnalyzer:
             self._mark_unparseable(filepath)
             return False
 
-        # Phase 2: Build relationships from symbol data
-        # For now, we still use the direct detect() approach for relationship creation
-        # since the full relationship builder integration requires more changes.
-        # This method provides a path for future integration.
+        # Phase 2: Build relationships from symbol data using RelationshipBuilder
+        if relationship_builder is None:
+            # Create a single-file builder for this file only
+            relationship_builder = RelationshipBuilder()
 
-        # Convert symbol references to relationships using the existing detect() flow
-        # This maintains compatibility while allowing symbol data inspection
-        file_content = self._read_file(filepath)
-        if file_content is None:
-            return False
+        # Add or update this file's symbol data in the builder
+        relationship_builder.remove_file_data(filepath)  # Remove old data if exists
+        relationship_builder.add_file_data(symbol_data)
 
-        try:
-            module_ast = self._parse_ast(filepath, file_content)
-            if module_ast is None:
-                self._mark_unparseable(filepath)
-                return False
-        except ASTParsingTimeoutError:
-            self._mark_unparseable(filepath)
-            return False
+        # Build relationships for this file
+        relationships = relationship_builder.build_relationships_for_file(filepath)
 
-        relationships = self._dispatch_detectors(filepath, module_ast)
+        # Store relationships in graph
         self._store_relationships(filepath, relationships)
 
         return True
+
+    def analyze_project_two_phase(
+        self,
+        filepaths: List[str],
+        relationship_builder: Optional[RelationshipBuilder] = None,
+    ) -> Tuple[int, int, RelationshipBuilder]:
+        """Analyze multiple files using two-phase approach with shared builder.
+
+        This method provides the full benefit of two-phase analysis by:
+        1. Extracting symbol data from all files first (Phase 1)
+        2. Building relationships with cross-file resolution (Phase 2)
+
+        Args:
+            filepaths: List of absolute paths to Python files to analyze.
+            relationship_builder: Optional RelationshipBuilder. If None, creates new one.
+
+        Returns:
+            Tuple of (success_count, failed_count, relationship_builder).
+            The relationship_builder can be reused for incremental updates.
+        """
+        if relationship_builder is None:
+            relationship_builder = RelationshipBuilder()
+
+        success_count = 0
+        failed_count = 0
+
+        # Phase 1: Extract symbol data from all files
+        symbol_data_map: Dict[str, FileSymbolData] = {}
+        for filepath in filepaths:
+            symbol_data = self.extract_file_symbols(filepath)
+            if symbol_data is not None and symbol_data.is_valid:
+                symbol_data_map[filepath] = symbol_data
+                relationship_builder.remove_file_data(filepath)
+                relationship_builder.add_file_data(symbol_data)
+            elif symbol_data is not None and not symbol_data.is_valid:
+                self._mark_unparseable(filepath)
+                failed_count += 1
+            else:
+                failed_count += 1
+
+        # Phase 2: Build relationships for all files with cross-file resolution
+        for filepath in symbol_data_map:
+            relationships = relationship_builder.build_relationships_for_file(filepath)
+            self._store_relationships(filepath, relationships)
+            success_count += 1
+
+        return (success_count, failed_count, relationship_builder)
