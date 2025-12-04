@@ -46,13 +46,13 @@ repos:
         types: [python]
         pass_filenames: false
 
-  # Fast unit tests
+  # Fast unit tests (parallel execution)
   - repo: local
     hooks:
       - id: pytest-fast
-        name: pytest (fast tests only)
+        name: pytest (fast tests only, parallel)
         entry: pytest
         language: system
-        args: [-m, "not slow", --tb=short]
+        args: [-n, auto, --dist=loadfile, -m, "not slow", --tb=short]
         pass_filenames: false
         types: [python]
