@@ -871,6 +871,10 @@ class CrossFileContextService:
         Per EC-14, detects when target files have been deleted and
         generates appropriate warnings.
 
+        Excludes special marker paths (<stdlib:...>, <third-party:...>,
+        <builtin:...>, <unresolved:...>) from file existence checks since
+        these are not actual filesystem paths.
+
         Args:
             dependencies: List of relationships to check.
 
@@ -881,6 +885,11 @@ class CrossFileContextService:
         deleted_files: Set[str] = set()
 
         for rel in dependencies:
+            # Skip special marker paths (stdlib, third-party, builtin, unresolved)
+            # These are not actual filesystem paths and should not be checked
+            if rel.target_file.startswith("<") and rel.target_file.endswith(">"):
+                continue
+
             target_path = Path(rel.target_file)
 
             # Check if file is marked as deleted in metadata
@@ -1010,12 +1019,20 @@ class CrossFileContextService:
         context_parts.append("")
 
         # Dependency summary
+        # Per TDD Section 3.8.3 and FR-13: Line numbers should indicate where
+        # symbols are DEFINED in the dependency file, not where they're USED
+        # in the target file. This enables efficient snippet-based caching.
         context_parts.append("This file imports from:")
         for target_file_path, rels in files_imported.items():
             symbols = []
             for rel in rels:
                 if rel.target_symbol:
-                    symbols.append(f"{rel.target_symbol}() (line {rel.line_number})")
+                    # Use target_line (definition line) instead of line_number (usage line)
+                    if rel.target_line is not None:
+                        symbols.append(f"{rel.target_symbol}() (line {rel.target_line})")
+                    else:
+                        # Fallback if target_line not available
+                        symbols.append(f"{rel.target_symbol}()")
                 else:
                     symbols.append(f"(line {rel.line_number})")
             symbols_str = ", ".join(symbols[:3])  # Limit to 3 per file

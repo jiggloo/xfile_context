@@ -23,8 +23,9 @@ See TDD Section 3.5.2.1 and 3.5.2.4 for detailed specifications.
 
 import ast
 import logging
+import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import FrozenSet, List, Optional
 
 from xfile_context.detectors.base import RelationshipDetector
 from xfile_context.models import Relationship, RelationshipType
@@ -32,36 +33,28 @@ from xfile_context.models import Relationship, RelationshipType
 logger = logging.getLogger(__name__)
 
 
-class ImportDetector(RelationshipDetector):
-    """Detector for import relationships in Python code.
+def _get_stdlib_modules() -> FrozenSet[str]:
+    """Get stdlib modules, compatible with Python 3.9+.
 
-    Detects import statements and resolves them to file paths when possible.
-    Implements the detector plugin pattern from DD-1.
+    Uses sys.stdlib_module_names when available (Python 3.10+) for an
+    authoritative list. Falls back to a comprehensive curated list for
+    Python 3.9 support.
 
-    Patterns Detected:
-    - import module
-    - import package.submodule
-    - from module import name
-    - from package import submodule
-    - Relative imports: from . import name, from .. import name
-
-    Module Resolution (TDD Section 3.5.2.1):
-    1. Same directory: module_name.py or module_name/__init__.py
-    2. Parent packages (up to project root)
-    3. Standard library (mark as <stdlib:module_name>)
-    4. Third-party (mark as <third-party:package_name>)
-    5. Unresolved (mark as <unresolved:module_name>)
-
-    Priority: 100 (Foundation detector - runs first to build import map)
-
-    See TDD Section 3.4.4 for detector interface specifications.
+    Returns:
+        FrozenSet of stdlib module names.
     """
+    if hasattr(sys, "stdlib_module_names"):
+        # Python 3.10+: Use authoritative list, add builtins if missing
+        # (builtins is always available but may not be in stdlib_module_names)
+        return sys.stdlib_module_names | {"builtins"}
 
-    # Python standard library modules
-    # This is a curated list of common stdlib modules
-    STDLIB_MODULES = frozenset(
+    # Python 3.9: Comprehensive fallback list
+    return frozenset(
         [
-            # Built-in modules
+            # Built-in modules (often overlooked)
+            "builtins",
+            "_thread",
+            # Standard modules
             "sys",
             "os",
             "io",
@@ -176,6 +169,38 @@ class ImportDetector(RelationshipDetector):
             "atexit",
         ]
     )
+
+
+class ImportDetector(RelationshipDetector):
+    """Detector for import relationships in Python code.
+
+    Detects import statements and resolves them to file paths when possible.
+    Implements the detector plugin pattern from DD-1.
+
+    Patterns Detected:
+    - import module
+    - import package.submodule
+    - from module import name
+    - from package import submodule
+    - Relative imports: from . import name, from .. import name
+
+    Module Resolution (TDD Section 3.5.2.1):
+    1. Same directory: module_name.py or module_name/__init__.py
+    2. Parent packages (up to project root)
+    3. Standard library (mark as <stdlib:module_name>)
+    4. Third-party (mark as <third-party:package_name>)
+    5. Unresolved (mark as <unresolved:module_name>)
+
+    Priority: 100 (Foundation detector - runs first to build import map)
+
+    See TDD Section 3.4.4 for detector interface specifications.
+    """
+
+    # Python standard library modules
+    # Uses _get_stdlib_modules() for Python version compatibility:
+    # - Python 3.10+: Uses sys.stdlib_module_names (authoritative)
+    # - Python 3.9: Uses comprehensive fallback list
+    STDLIB_MODULES = _get_stdlib_modules()
 
     def detect(
         self,

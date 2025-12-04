@@ -1272,6 +1272,10 @@ class TestContextInjectionFormatting:
             )
             graph.add_relationship(rel)
 
+            # Add metadata to prevent lazy re-analysis from changing the relationship
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 1))
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
+
             service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
 
             # Create main file but NOT utils.py (simulates deleted file)
@@ -1302,6 +1306,10 @@ class TestContextInjectionFormatting:
                 target_line=5,
             )
             graph.add_relationship(rel)
+
+            # Add metadata to prevent lazy re-analysis from changing the relationship
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 1))
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
 
             service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
 
@@ -1718,5 +1726,366 @@ class TestLazyInitialization:
 
             # Non-existent file
             assert service._needs_analysis(str(Path(tmpdir) / "nonexistent.py")) is False
+
+            service.shutdown()
+
+
+class TestSpecialMarkerPathHandling:
+    """Tests for special marker path handling (Issue #116 Bug 2).
+
+    Verifies that special marker paths (<stdlib:...>, <third-party:...>,
+    <builtin:...>, <unresolved:...>) are correctly excluded from file
+    existence checks in _check_deleted_files().
+    """
+
+    def test_check_deleted_files_skips_stdlib_markers(self):
+        """Test that stdlib markers don't trigger false deletion warnings."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+
+            # Create relationships to stdlib modules
+            rel_ast = Relationship(
+                source_file=main_path,
+                target_file="<stdlib:ast>",
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="parse",
+            )
+            rel_logging = Relationship(
+                source_file=main_path,
+                target_file="<stdlib:logging>",
+                relationship_type=RelationshipType.IMPORT,
+                line_number=2,
+                target_symbol="Logger",
+            )
+            graph.add_relationship(rel_ast)
+            graph.add_relationship(rel_logging)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Call _check_deleted_files with stdlib dependencies
+            deps = [rel_ast, rel_logging]
+            warnings, deleted_files = service._check_deleted_files(deps)
+
+            # Should not have any warnings for stdlib modules
+            assert len(warnings) == 0
+            assert len(deleted_files) == 0
+
+            service.shutdown()
+
+    def test_check_deleted_files_skips_third_party_markers(self):
+        """Test that third-party markers don't trigger false deletion warnings."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+
+            # Create relationship to third-party module
+            rel = Relationship(
+                source_file=main_path,
+                target_file="<third-party:requests>",
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="get",
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            warnings, deleted_files = service._check_deleted_files([rel])
+
+            # Should not have any warnings for third-party modules
+            assert len(warnings) == 0
+            assert len(deleted_files) == 0
+
+            service.shutdown()
+
+    def test_check_deleted_files_skips_unresolved_markers(self):
+        """Test that unresolved markers don't trigger false deletion warnings."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+
+            # Create relationship to unresolved module
+            rel = Relationship(
+                source_file=main_path,
+                target_file="<unresolved:some_missing_module>",
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="func",
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            warnings, deleted_files = service._check_deleted_files([rel])
+
+            # Should not have any warnings for unresolved modules
+            assert len(warnings) == 0
+            assert len(deleted_files) == 0
+
+            service.shutdown()
+
+    def test_check_deleted_files_detects_real_deleted_files(self):
+        """Test that actual deleted files still trigger warnings correctly."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # Create relationship to a real file path that doesn't exist
+            rel = Relationship(
+                source_file=main_path,
+                target_file=utils_path,  # Real path, not marker
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+                target_symbol="helper",
+            )
+            graph.add_relationship(rel)
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # utils.py doesn't exist, so it should be flagged as deleted
+            warnings, deleted_files = service._check_deleted_files([rel])
+
+            assert len(warnings) == 1
+            assert utils_path in deleted_files
+            assert "no longer exists" in warnings[0]
+
+            service.shutdown()
+
+    def test_check_deleted_files_mixed_markers_and_real_files(self):
+        """Test handling a mix of special markers and real file paths."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+            existing_path = str(Path(tmpdir) / "existing.py")
+
+            # Create the existing file
+            Path(existing_path).write_text("x = 1\n")
+
+            # Mix of relationships
+            rel_stdlib = Relationship(
+                source_file=main_path,
+                target_file="<stdlib:os>",
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,
+            )
+            rel_deleted = Relationship(
+                source_file=main_path,
+                target_file=utils_path,  # Doesn't exist
+                relationship_type=RelationshipType.IMPORT,
+                line_number=2,
+            )
+            rel_existing = Relationship(
+                source_file=main_path,
+                target_file=existing_path,  # Exists
+                relationship_type=RelationshipType.IMPORT,
+                line_number=3,
+            )
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            deps = [rel_stdlib, rel_deleted, rel_existing]
+            warnings, deleted_files = service._check_deleted_files(deps)
+
+            # Only the deleted real file should trigger a warning
+            assert len(warnings) == 1
+            assert utils_path in deleted_files
+            assert existing_path not in deleted_files
+
+            service.shutdown()
+
+
+class TestDependencySummaryLineNumbers:
+    """Tests for dependency summary line number formatting (Issue #116 Bug 3).
+
+    Verifies that the dependency summary shows definition line numbers
+    (target_line) from the dependency file, not usage line numbers
+    (line_number) from the source file.
+    """
+
+    def test_assemble_context_uses_target_line_not_line_number(self):
+        """Test that _assemble_context uses target_line for definition line."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # Create relationship with distinct line numbers:
+            # - line_number=10: where the import is used in main.py
+            # - target_line=25: where helper is defined in utils.py
+            rel = Relationship(
+                source_file=main_path,
+                target_file=utils_path,
+                relationship_type=RelationshipType.IMPORT,
+                line_number=10,  # Usage line in main.py
+                target_symbol="helper",
+                target_line=25,  # Definition line in utils.py
+            )
+            graph.add_relationship(rel)
+
+            # Add metadata to prevent lazy re-analysis
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 1))
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create the files
+            Path(utils_path).write_text(
+                "# Lines 1-24 are filler\n" * 24 + "def helper():\n    pass\n"
+            )
+            Path(main_path).write_text(
+                "# Lines 1-9 are filler\n" * 9 + "from utils import helper\n"
+            )
+
+            # Assemble context
+            context, warnings = service._assemble_context(main_path, [rel])
+
+            # The dependency summary should show target_line (25), not line_number (10)
+            # Format: "- utils.py: helper() (line 25)"
+            assert "helper() (line 25)" in context
+            assert "helper() (line 10)" not in context
+
+            service.shutdown()
+
+    def test_assemble_context_fallback_when_target_line_is_none(self):
+        """Test that symbols without target_line omit the line number."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # Create relationship with target_line=None
+            rel = Relationship(
+                source_file=main_path,
+                target_file=utils_path,
+                relationship_type=RelationshipType.IMPORT,
+                line_number=5,
+                target_symbol="helper",
+                target_line=None,  # Definition line unknown
+            )
+            graph.add_relationship(rel)
+
+            # Add metadata
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 1))
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create files
+            Path(utils_path).write_text("def helper():\n    pass\n")
+            Path(main_path).write_text("from utils import helper\n")
+
+            context, _ = service._assemble_context(main_path, [rel])
+
+            # When target_line is None, should just show symbol without line number
+            # Format: "- utils.py: helper()"
+            assert "helper()" in context
+            # Should not show the usage line number (5) in the dependency summary
+            assert "helper() (line 5)" not in context
+
+            service.shutdown()
+
+    def test_assemble_context_non_symbol_uses_line_number(self):
+        """Test that non-symbol dependencies use line_number (usage line)."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # Create relationship without target_symbol
+            rel = Relationship(
+                source_file=main_path,
+                target_file=utils_path,
+                relationship_type=RelationshipType.IMPORT,
+                line_number=7,
+                target_symbol=None,  # No specific symbol
+                target_line=None,
+            )
+            graph.add_relationship(rel)
+
+            # Add metadata
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 1))
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            Path(utils_path).write_text("x = 1\n")
+            Path(main_path).write_text("import utils\n")
+
+            context, _ = service._assemble_context(main_path, [rel])
+
+            # Non-symbol imports should show the usage line_number
+            # Format: "- utils.py: (line 7)"
+            assert "(line 7)" in context
+
+            service.shutdown()
+
+    def test_context_injection_with_target_line_set(self):
+        """Integration test: when target_line is set, it appears in context.
+
+        Note: The full integration of setting target_line during analysis
+        depends on the function call detector's ability to resolve symbol
+        definitions, which may not always succeed. This test verifies the
+        behavior when target_line IS set by manually adding relationships.
+        """
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # Manually create a relationship with target_line set
+            # This simulates what should happen when the detector fully resolves symbols
+            rel = Relationship(
+                source_file=main_path,
+                target_file=utils_path,
+                relationship_type=RelationshipType.IMPORT,
+                line_number=1,  # Import line in main.py
+                target_symbol="helper_function",
+                target_line=15,  # Definition line in utils.py
+            )
+            graph.add_relationship(rel)
+
+            # Prevent lazy re-analysis
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 1))
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create utils.py with function defined on line 15
+            utils_lines = ["# filler\n"] * 14 + [
+                "def helper_function():\n",
+                '    """A helper."""\n',
+                "    return 42\n",
+            ]
+            Path(utils_path).write_text("".join(utils_lines))
+            Path(main_path).write_text("from utils import helper_function\n")
+
+            # Read main.py with context
+            result = service.read_file_with_context(main_path)
+
+            # The dependency summary should show target_line (15)
+            assert "helper_function" in result.injected_context
+            assert "line 15" in result.injected_context
 
             service.shutdown()
