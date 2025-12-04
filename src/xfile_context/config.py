@@ -45,7 +45,7 @@ class Config:
         "enable_injection_logging": True,
         "enable_warning_logging": True,
         # Two-phase analysis configuration (Issue #125)
-        "use_two_phase_analysis": False,  # Default to direct mode for backwards compatibility
+        "use_two_phase_analysis": True,  # Enable two-phase analysis by default
         # Symbol cache configuration (Issue #125 Phase 3)
         "enable_symbol_cache": True,  # Enable symbol caching for incremental analysis
         "symbol_cache_max_entries": 1000,  # Maximum cached files
@@ -305,7 +305,7 @@ class Config:
         - Foundation for incremental analysis
         - Symbol data inspection independent of relationships
 
-        Default is False for backwards compatibility with direct analysis mode.
+        Default is True (two-phase analysis enabled).
         """
         value = self._config["use_two_phase_analysis"]
         assert isinstance(value, bool)
