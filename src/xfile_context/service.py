@@ -265,6 +265,47 @@ class CrossFileContextService:
 
         logger.info(f"CrossFileContextService initialized with project_root={self._project_root}")
 
+    def _needs_analysis(self, file_path: str) -> bool:
+        """Check if file needs (re-)analysis.
+
+        Returns True if:
+        - File exists AND has never been analyzed (no metadata)
+        - File exists AND was modified since last analysis (mtime > last_analyzed)
+
+        Returns False if:
+        - File doesn't exist
+        - File was already analyzed and not modified
+
+        This enables lazy initialization per Issue #114: files are analyzed
+        on-demand when read_file_with_context is called, rather than requiring
+        eager full-project analysis at startup.
+
+        Args:
+            file_path: Path to file to check.
+
+        Returns:
+            True if file needs analysis, False otherwise.
+        """
+        # Check if file exists first
+        path = Path(file_path)
+        if not path.exists():
+            return False  # Non-existent file doesn't need analysis
+
+        metadata = self._graph.get_file_metadata(file_path)
+
+        if metadata is None:
+            return True  # File exists but never analyzed
+
+        # Check if file was modified since last analysis
+        try:
+            file_mtime = path.stat().st_mtime
+            if file_mtime > metadata.last_analyzed:
+                return True  # Modified since last analysis
+        except OSError:
+            return False  # Can't stat file, skip
+
+        return False  # Already analyzed and not modified
+
     def _validate_filepath(self, filepath: str) -> None:
         """Validate filepath for security concerns.
 
@@ -441,6 +482,19 @@ class CrossFileContextService:
                 injected_context="",
                 warnings=warnings,
             )
+
+        # Lazy initialization: analyze target file if needed (Issue #114)
+        # This ensures context is available on first read without requiring
+        # eager full-project analysis at startup.
+        #
+        # Note: We only analyze the target file, not its dependencies.
+        # Signature extraction for dependencies uses direct file reads via cache,
+        # so dependencies don't need to be analyzed for context injection.
+        # Analyzing dependencies would remove relationships pointing to them,
+        # breaking the context injection.
+        if self._needs_analysis(file_path):
+            logger.debug(f"Lazy analysis: analyzing target file {file_path}")
+            self._analyzer.analyze_file(file_path)
 
         # Get dependencies for this file from the graph
         dependencies = self._get_file_dependencies(file_path)

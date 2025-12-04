@@ -11,6 +11,7 @@ Tests cover:
 - Security validation
 """
 
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -18,9 +19,26 @@ import pytest
 
 from xfile_context.cache import WorkingMemoryCache
 from xfile_context.config import Config
-from xfile_context.models import Relationship, RelationshipGraph, RelationshipType
+from xfile_context.models import FileMetadata, Relationship, RelationshipGraph, RelationshipType
 from xfile_context.service import CrossFileContextService, ReadResult
 from xfile_context.storage import InMemoryStore
+
+
+def _create_file_metadata(filepath: str, relationship_count: int = 1) -> FileMetadata:
+    """Create FileMetadata for testing to prevent lazy re-analysis.
+
+    When tests manually add relationships to the graph, they should also
+    add metadata to prevent the lazy initialization from re-analyzing
+    and overwriting the test relationships.
+    """
+    return FileMetadata(
+        filepath=filepath,
+        last_analyzed=time.time() + 3600,  # 1 hour in the future to prevent re-analysis
+        relationship_count=relationship_count,
+        has_dynamic_patterns=False,
+        dynamic_pattern_types=[],
+        is_unparseable=False,
+    )
 
 
 class TestReadResult:
@@ -777,6 +795,13 @@ class TestHighUsageFunctionDetection:
                 )
                 graph.add_relationship(rel)
 
+            # Add metadata to prevent lazy re-analysis from overwriting test relationships
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 1))
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
+            for i in range(1, 4):
+                other_path = str(Path(tmpdir) / f"other{i}.py")
+                graph.set_file_metadata(other_path, _create_file_metadata(other_path, 1))
+
             service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
 
             # Create the files
@@ -1041,15 +1066,22 @@ class TestContextInjectionFormatting:
             config = Config()
             graph = RelationshipGraph()
 
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
             rel = Relationship(
-                source_file=str(Path(tmpdir) / "main.py"),
-                target_file=str(Path(tmpdir) / "utils.py"),
+                source_file=main_path,
+                target_file=utils_path,
                 relationship_type=RelationshipType.IMPORT,
                 line_number=1,
                 target_symbol="helper",
                 target_line=5,
             )
             graph.add_relationship(rel)
+
+            # Add metadata to prevent lazy re-analysis from overwriting test relationships
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 1))
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
 
             service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
 
@@ -1080,15 +1112,22 @@ class TestContextInjectionFormatting:
             config = Config()
             graph = RelationshipGraph()
 
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
             rel = Relationship(
-                source_file=str(Path(tmpdir) / "main.py"),
-                target_file=str(Path(tmpdir) / "utils.py"),
+                source_file=main_path,
+                target_file=utils_path,
                 relationship_type=RelationshipType.IMPORT,
                 line_number=1,
                 target_symbol="helper",
                 target_line=5,
             )
             graph.add_relationship(rel)
+
+            # Add metadata to prevent lazy re-analysis from overwriting test relationships
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 1))
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
 
             service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
 
@@ -1147,13 +1186,20 @@ class TestContextInjectionFormatting:
             config = Config()
             graph = RelationshipGraph()
 
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
             rel = Relationship(
-                source_file=str(Path(tmpdir) / "main.py"),
-                target_file=str(Path(tmpdir) / "utils.py"),
+                source_file=main_path,
+                target_file=utils_path,
                 relationship_type=RelationshipType.WILDCARD_IMPORT,
                 line_number=1,
             )
             graph.add_relationship(rel)
+
+            # Add metadata to prevent lazy re-analysis from overwriting test relationships
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 1))
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
 
             service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
 
@@ -1173,15 +1219,22 @@ class TestContextInjectionFormatting:
             config = Config()
             graph = RelationshipGraph()
 
+            main_path = str(Path(tmpdir) / "main.py")
+            large_path = str(Path(tmpdir) / "large.py")
+
             rel = Relationship(
-                source_file=str(Path(tmpdir) / "main.py"),
-                target_file=str(Path(tmpdir) / "large.py"),
+                source_file=main_path,
+                target_file=large_path,
                 relationship_type=RelationshipType.IMPORT,
                 line_number=1,
                 target_symbol="large_func",
                 target_line=1,
             )
             graph.add_relationship(rel)
+
+            # Add metadata to prevent lazy re-analysis from overwriting test relationships
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 1))
+            graph.set_file_metadata(large_path, _create_file_metadata(large_path, 0))
 
             service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
 
@@ -1511,4 +1564,159 @@ class TestFunctionSignatureExtraction:
             assert sig is not None
             assert "class MyClass:" in sig
             assert doc == "A simple class."
+            service.shutdown()
+
+
+class TestLazyInitialization:
+    """Tests for lazy initialization feature (Issue #114).
+
+    The lazy initialization ensures that files are analyzed on-demand when
+    read_file_with_context is called, rather than requiring eager full-project
+    analysis at MCP server startup.
+    """
+
+    def test_lazy_analysis_on_first_read(self):
+        """Test that file is analyzed on first read with empty graph."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            # Start with empty graph (no prior analysis)
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            # Create files
+            utils_path = Path(tmpdir) / "utils.py"
+            main_path = Path(tmpdir) / "main.py"
+
+            utils_path.write_text("def helper():\n    return 42\n")
+            main_path.write_text("from utils import helper\n\nresult = helper()\n")
+
+            # Read file - should trigger lazy analysis
+            result = service.read_file_with_context(str(main_path))
+
+            # Verify context was injected (indicates analysis happened)
+            assert "[Cross-File Context]" in result.injected_context
+            assert "This file imports from:" in result.injected_context
+            assert "utils.py" in result.injected_context
+
+            # Verify the graph now has relationships
+            deps = service._graph.get_dependencies(str(main_path))
+            assert len(deps) > 0
+
+            # Verify file metadata was created
+            metadata = service._graph.get_file_metadata(str(main_path))
+            assert metadata is not None
+            assert metadata.last_analyzed > 0
+
+            service.shutdown()
+
+    def test_lazy_analysis_skips_already_analyzed(self):
+        """Test that already-analyzed files are not re-analyzed."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            main_path = Path(tmpdir) / "main.py"
+            main_path.write_text("x = 1\n")
+
+            # First read triggers analysis
+            service.read_file_with_context(str(main_path))
+
+            # Get the analysis timestamp
+            metadata_before = service._graph.get_file_metadata(str(main_path))
+            assert metadata_before is not None
+            timestamp_before = metadata_before.last_analyzed
+
+            # Second read should not re-analyze (file not modified)
+            service.read_file_with_context(str(main_path))
+
+            metadata_after = service._graph.get_file_metadata(str(main_path))
+            assert metadata_after is not None
+            timestamp_after = metadata_after.last_analyzed
+
+            # Timestamp should be the same (no re-analysis)
+            assert timestamp_before == timestamp_after
+
+            service.shutdown()
+
+    def test_lazy_analysis_reanalyzes_modified_file(self):
+        """Test that modified files are re-analyzed."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            main_path = Path(tmpdir) / "main.py"
+            main_path.write_text("x = 1\n")
+
+            # First read triggers analysis
+            service.read_file_with_context(str(main_path))
+
+            metadata_before = service._graph.get_file_metadata(str(main_path))
+            assert metadata_before is not None
+            timestamp_before = metadata_before.last_analyzed
+
+            # Modify the file (update mtime)
+            import time
+
+            time.sleep(0.1)  # Ensure different mtime
+            main_path.write_text("x = 2\nimport os\n")
+
+            # Second read should re-analyze (file modified)
+            service.read_file_with_context(str(main_path))
+
+            metadata_after = service._graph.get_file_metadata(str(main_path))
+            assert metadata_after is not None
+            timestamp_after = metadata_after.last_analyzed
+
+            # Timestamp should be different (re-analyzed)
+            assert timestamp_after > timestamp_before
+
+            service.shutdown()
+
+    def test_needs_analysis_helper_no_metadata(self):
+        """Test _needs_analysis returns True when file has no metadata."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            main_path = Path(tmpdir) / "main.py"
+            main_path.write_text("x = 1\n")
+
+            # File exists but has no metadata
+            assert service._needs_analysis(str(main_path)) is True
+
+            service.shutdown()
+
+    def test_needs_analysis_helper_with_metadata(self):
+        """Test _needs_analysis returns False when file has current metadata."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            main_path = Path(tmpdir) / "main.py"
+            main_path.write_text("x = 1\n")
+
+            # Add metadata with future timestamp
+            metadata = FileMetadata(
+                filepath=str(main_path),
+                last_analyzed=time.time() + 3600,  # Future timestamp
+                relationship_count=0,
+                has_dynamic_patterns=False,
+                dynamic_pattern_types=[],
+                is_unparseable=False,
+            )
+            service._graph.set_file_metadata(str(main_path), metadata)
+
+            # File has metadata and isn't modified
+            assert service._needs_analysis(str(main_path)) is False
+
+            service.shutdown()
+
+    def test_needs_analysis_helper_nonexistent_file(self):
+        """Test _needs_analysis returns False for non-existent file."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            service = CrossFileContextService(config, project_root=tmpdir)
+
+            # Non-existent file
+            assert service._needs_analysis(str(Path(tmpdir) / "nonexistent.py")) is False
+
             service.shutdown()
