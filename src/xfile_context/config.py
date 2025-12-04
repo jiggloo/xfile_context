@@ -44,6 +44,11 @@ class Config:
         "metrics_anonymize_paths": False,
         "enable_injection_logging": True,
         "enable_warning_logging": True,
+        # Two-phase analysis configuration (Issue #125)
+        "use_two_phase_analysis": True,  # Enable two-phase analysis by default
+        # Symbol cache configuration (Issue #125 Phase 3)
+        "enable_symbol_cache": True,  # Enable symbol caching for incremental analysis
+        "symbol_cache_max_entries": 1000,  # Maximum cached files
     }
 
     def __init__(self, config_path: Optional[Path] = None):
@@ -134,7 +139,7 @@ class Config:
             return bool(isinstance(value, int) and value > 0)
         elif key == "context_token_limit":
             return bool(isinstance(value, int) and 0 < value < 10000)  # Sanity check from TDD
-        elif key == "function_usage_warning_threshold":
+        elif key == "function_usage_warning_threshold" or key == "symbol_cache_max_entries":
             return bool(isinstance(value, int) and value > 0)
         elif key in ["suppress_warnings", "ignore_patterns"]:
             # Must be a list
@@ -285,4 +290,54 @@ class Config:
         """Whether warning logging is enabled."""
         value = self._config["enable_warning_logging"]
         assert isinstance(value, bool)
+        return value
+
+    @property
+    def use_two_phase_analysis(self) -> bool:
+        """Whether to use two-phase analysis mode.
+
+        Two-phase analysis (Issue #125):
+        - Phase 1: AST -> FileSymbolData (extract symbols)
+        - Phase 2: FileSymbolData -> Relationships (via RelationshipBuilder)
+
+        Benefits:
+        - Better cross-file resolution
+        - Foundation for incremental analysis
+        - Symbol data inspection independent of relationships
+
+        Default is True (two-phase analysis enabled).
+        """
+        value = self._config["use_two_phase_analysis"]
+        assert isinstance(value, bool)
+        return value
+
+    @property
+    def enable_symbol_cache(self) -> bool:
+        """Whether to enable symbol data caching for incremental analysis.
+
+        When enabled (and two-phase analysis is also enabled), FileSymbolData
+        is cached in memory. On subsequent analyses, unchanged files use cached
+        symbols instead of re-parsing the AST.
+
+        Benefits:
+        - Faster incremental analysis (skip unchanged files)
+        - Reduced CPU usage during re-analysis
+
+        Default is True (caching enabled when two-phase is used).
+        """
+        value = self._config["enable_symbol_cache"]
+        assert isinstance(value, bool)
+        return value
+
+    @property
+    def symbol_cache_max_entries(self) -> int:
+        """Maximum number of files to cache symbol data for.
+
+        When the cache reaches this limit, least recently used entries
+        are evicted to make room for new entries.
+
+        Default is 1000 files.
+        """
+        value = self._config["symbol_cache_max_entries"]
+        assert isinstance(value, int)
         return value

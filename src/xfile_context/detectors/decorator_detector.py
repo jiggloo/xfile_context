@@ -26,7 +26,7 @@ Related Requirements:
 
 import ast
 import logging
-from typing import FrozenSet, Optional
+from typing import FrozenSet, List, Optional, Tuple
 
 from xfile_context.detectors.dynamic_pattern_detector import (
     DynamicPatternDetector,
@@ -34,6 +34,8 @@ from xfile_context.detectors.dynamic_pattern_detector import (
     DynamicPatternWarning,
     WarningSeverity,
 )
+from xfile_context.models import SymbolDefinition, SymbolReference, SymbolType
+from xfile_context.pytest_config_parser import is_test_module
 
 logger = logging.getLogger(__name__)
 
@@ -261,3 +263,135 @@ class DecoratorDetector(DynamicPatternDetector):
             "DecoratorDetector"
         """
         return "DecoratorDetector"
+
+    def extract_symbols(
+        self,
+        node: ast.AST,
+        filepath: str,
+        module_ast: ast.Module,
+    ) -> Tuple[List[SymbolDefinition], List[SymbolReference]]:
+        """Extract decorated function/class definitions (Issue #122).
+
+        DecoratorDetector can produce definitions for decorated functions/classes.
+        It does not produce references since the decorator relationship is complex
+        and better handled by other detectors.
+
+        The definitions include decorator information in the metadata.
+
+        Args:
+            node: AST node to analyze.
+            filepath: Absolute path to the file being analyzed.
+            module_ast: The root AST node of the entire module (for context).
+
+        Returns:
+            Tuple of (definitions, []) - decorated items produce definitions.
+        """
+        definitions: List[SymbolDefinition] = []
+
+        # Only process function/class definitions with decorators
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return ([], [])
+
+        if not node.decorator_list:
+            return ([], [])
+
+        # Check if this is a test module (with caching)
+        if self._cached_filepath != filepath:
+            self._cached_filepath = filepath
+            self._cached_is_test = is_test_module(filepath, self._project_root)
+
+        # Extract decorator names
+        decorator_names: List[str] = []
+        for decorator in node.decorator_list:
+            dec_name = self._get_decorator_name(decorator)
+            if dec_name:
+                decorator_names.append(dec_name)
+
+        # Determine symbol type and build definition
+        line_end: int = node.end_lineno if node.end_lineno else node.lineno
+
+        if isinstance(node, ast.ClassDef):
+            symbol_type = SymbolType.CLASS
+            signature = f"class {node.name}"
+
+            # Get base class names
+            bases = None
+            if node.bases:
+                bases = []
+                for base in node.bases:
+                    if isinstance(base, ast.Name):
+                        bases.append(base.id)
+                    elif isinstance(base, ast.Attribute):
+                        parts = [base.attr]
+                        current = base.value
+                        while isinstance(current, ast.Attribute):
+                            parts.append(current.attr)
+                            current = current.value
+                        if isinstance(current, ast.Name):
+                            parts.append(current.id)
+                        bases.append(".".join(reversed(parts)))
+
+            # Extract docstring if present
+            docstring = None
+            if (
+                node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)
+            ):
+                full_doc = node.body[0].value.value
+                docstring = full_doc.split("\n")[0].strip()
+
+            definition = SymbolDefinition(
+                name=node.name,
+                symbol_type=symbol_type,
+                line_start=node.lineno,
+                line_end=line_end,
+                signature=signature,
+                decorators=decorator_names if decorator_names else None,
+                bases=bases,
+                docstring=docstring,
+            )
+        else:
+            # Function or async function
+            symbol_type = SymbolType.FUNCTION
+
+            # Build signature
+            args_list = []
+            for arg in node.args.args:
+                args_list.append(arg.arg)
+            args_str = ", ".join(args_list)
+            prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
+            signature = f"{prefix} {node.name}({args_str})"
+
+            # Extract docstring if present
+            docstring = None
+            if (
+                node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)
+            ):
+                full_doc = node.body[0].value.value
+                docstring = full_doc.split("\n")[0].strip()
+
+            definition = SymbolDefinition(
+                name=node.name,
+                symbol_type=symbol_type,
+                line_start=node.lineno,
+                line_end=line_end,
+                signature=signature,
+                decorators=decorator_names if decorator_names else None,
+                docstring=docstring,
+            )
+
+        definitions.append(definition)
+
+        # Also call parent to detect pattern and emit warnings
+        for decorator in node.decorator_list:
+            warning = self._check_decorator(decorator, node, filepath, self._cached_is_test)
+            if warning:
+                self._warnings.append(warning)
+                self._emit_warning(warning)
+
+        return (definitions, [])

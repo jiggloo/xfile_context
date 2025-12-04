@@ -46,7 +46,10 @@ from xfile_context.injection_logger import (
 )
 from xfile_context.metrics_collector import MetricsCollector, SessionMetrics
 from xfile_context.models import Relationship, RelationshipGraph, RelationshipType
+from xfile_context.relationship_builder import RelationshipBuilder
+from xfile_context.staleness_resolver import StalenessResolver
 from xfile_context.storage import GraphExport, InMemoryStore, RelationshipStore
+from xfile_context.symbol_cache import SymbolDataCache
 from xfile_context.warning_formatter import StructuredWarning, WarningEmitter
 
 logger = logging.getLogger(__name__)
@@ -263,6 +266,23 @@ class CrossFileContextService:
             log_dir=self._project_root / ".cross_file_context_logs"
         )
 
+        # Initialize RelationshipBuilder for two-phase analysis (Issue #125)
+        # The builder is shared across files for cross-file symbol resolution
+        self._relationship_builder: Optional[RelationshipBuilder] = None
+        if self.config.use_two_phase_analysis:
+            self._relationship_builder = RelationshipBuilder()
+            logger.info("Two-phase analysis mode enabled")
+
+        # Initialize SymbolDataCache for incremental analysis (Issue #125 Phase 3)
+        self._symbol_cache: Optional[SymbolDataCache] = None
+        if self.config.use_two_phase_analysis and self.config.enable_symbol_cache:
+            self._symbol_cache = SymbolDataCache(
+                max_entries=self.config.symbol_cache_max_entries,
+            )
+            logger.info(
+                f"Symbol cache enabled (max {self.config.symbol_cache_max_entries} entries)"
+            )
+
         logger.info(f"CrossFileContextService initialized with project_root={self._project_root}")
 
     def _needs_analysis(self, file_path: str) -> bool:
@@ -305,6 +325,52 @@ class CrossFileContextService:
             return False  # Can't stat file, skip
 
         return False  # Already analyzed and not modified
+
+    def _resolve_staleness(self, file_path: str) -> None:
+        """Resolve staleness for target file and its transitive dependencies.
+
+        Implements Issue #117 Option B: Full transitive dependency check using
+        topological sort-based staleness resolution.
+
+        This method ensures that:
+        1. The target file is analyzed if stale
+        2. All transitive dependencies are checked for staleness
+        3. Stale files are processed in topological order (dependencies first)
+        4. Files with pending relationships are restored without re-analysis
+
+        Args:
+            file_path: Target file being read via read_file_with_context().
+        """
+        # Create staleness resolver with callbacks to service methods
+        resolver = StalenessResolver(
+            graph=self._graph,
+            needs_analysis=self._needs_analysis,
+            analyze_file=self._analyze_file_for_staleness,
+        )
+
+        # Resolve staleness for target and all transitive dependencies
+        resolver.resolve_staleness(file_path)
+
+    def _analyze_file_for_staleness(self, file_path: str) -> bool:
+        """Analyze a file during staleness resolution (Issue #117 Option B).
+
+        This is a callback used by StalenessResolver to analyze stale files.
+        It uses the appropriate analysis method based on configuration.
+
+        Args:
+            file_path: File to analyze.
+
+        Returns:
+            True if analysis succeeded, False otherwise.
+        """
+        logger.debug(f"Staleness resolution: analyzing {file_path}")
+
+        if self.config.use_two_phase_analysis:
+            return self._analyzer.analyze_file_two_phase(
+                file_path, relationship_builder=self._relationship_builder
+            )
+        else:
+            return self._analyzer.analyze_file(file_path)
 
     def _validate_filepath(self, filepath: str) -> None:
         """Validate filepath for security concerns.
@@ -359,6 +425,8 @@ class CrossFileContextService:
     def analyze_file(self, file_path: str) -> bool:
         """Analyze a single file and add its relationships to the graph.
 
+        Uses two-phase analysis when use_two_phase_analysis config is enabled (Issue #125).
+
         Args:
             file_path: Path to Python file to analyze.
 
@@ -366,7 +434,15 @@ class CrossFileContextService:
             True if analysis succeeded, False otherwise.
         """
         self._validate_filepath(file_path)
-        result = self._analyzer.analyze_file(file_path)
+
+        if self.config.use_two_phase_analysis:
+            # Two-phase analysis: AST -> FileSymbolData -> Relationships
+            result = self._analyzer.analyze_file_two_phase(
+                file_path, relationship_builder=self._relationship_builder
+            )
+        else:
+            # Direct analysis: AST -> Relationships (original flow)
+            result = self._analyzer.analyze_file(file_path)
 
         # Collect warnings from dynamic pattern detectors
         self._collect_detector_warnings()
@@ -376,6 +452,11 @@ class CrossFileContextService:
     def analyze_directory(self, directory_path: Optional[str] = None) -> Dict[str, Any]:
         """Analyze all Python files in a directory.
 
+        Uses two-phase analysis when use_two_phase_analysis config is enabled (Issue #125).
+        Two-phase directory analysis provides better cross-file resolution by:
+        1. Extracting symbol data from all files first
+        2. Building relationships with full project context
+
         Args:
             directory_path: Path to directory (default: project_root).
 
@@ -384,7 +465,7 @@ class CrossFileContextService:
         """
         dir_path = Path(directory_path) if directory_path else self._project_root
 
-        stats = {
+        stats: Dict[str, Any] = {
             "total": 0,
             "success": 0,
             "failed": 0,
@@ -394,6 +475,8 @@ class CrossFileContextService:
 
         start_time = time.time()
 
+        # Collect files to analyze
+        files_to_analyze: List[str] = []
         for py_file in dir_path.rglob("*.py"):
             file_path = str(py_file)
 
@@ -402,24 +485,45 @@ class CrossFileContextService:
                 stats["skipped"] += 1
                 continue
 
+            files_to_analyze.append(file_path)
             stats["total"] += 1
 
-            try:
-                if self._analyzer.analyze_file(file_path):
-                    stats["success"] += 1
-                else:
+        if self.config.use_two_phase_analysis:
+            # Two-phase analysis: Extract all symbols first, then build relationships
+            # This provides better cross-file resolution
+            # Pass symbol cache for incremental analysis (Issue #125 Phase 3)
+            success, failed, self._relationship_builder = self._analyzer.analyze_project_two_phase(
+                files_to_analyze,
+                relationship_builder=self._relationship_builder,
+                symbol_cache=self._symbol_cache,
+            )
+            stats["success"] = success
+            stats["failed"] = failed
+            # Add cache statistics if available
+            if self._symbol_cache is not None:
+                cache_stats = self._symbol_cache.get_statistics()
+                stats["cache_hits"] = cache_stats["hits"]
+                stats["cache_hit_rate"] = cache_stats["hit_rate"]
+        else:
+            # Direct analysis: Analyze each file independently
+            for file_path in files_to_analyze:
+                try:
+                    if self._analyzer.analyze_file(file_path):
+                        stats["success"] += 1
+                    else:
+                        stats["failed"] += 1
+                except Exception as e:
+                    logger.error(f"Error analyzing {file_path}: {e}")
                     stats["failed"] += 1
-            except Exception as e:
-                logger.error(f"Error analyzing {file_path}: {e}")
-                stats["failed"] += 1
 
         stats["elapsed_ms"] = (time.time() - start_time) * 1000
 
         # Collect warnings from dynamic pattern detectors
         self._collect_detector_warnings()
 
+        analysis_mode = "two-phase" if self.config.use_two_phase_analysis else "direct"
         logger.info(
-            f"Analyzed {stats['total']} files in {stats['elapsed_ms']:.1f}ms: "
+            f"Analyzed {stats['total']} files ({analysis_mode}) in {stats['elapsed_ms']:.1f}ms: "
             f"{stats['success']} success, {stats['failed']} failed, {stats['skipped']} skipped"
         )
 
@@ -483,18 +587,16 @@ class CrossFileContextService:
                 warnings=warnings,
             )
 
-        # Lazy initialization: analyze target file if needed (Issue #114)
+        # Lazy initialization: analyze target file and stale dependencies (Issue #114, #117)
         # This ensures context is available on first read without requiring
         # eager full-project analysis at startup.
         #
-        # Note: We only analyze the target file, not its dependencies.
-        # Signature extraction for dependencies uses direct file reads via cache,
-        # so dependencies don't need to be analyzed for context injection.
-        # Analyzing dependencies would remove relationships pointing to them,
-        # breaking the context injection.
-        if self._needs_analysis(file_path):
-            logger.debug(f"Lazy analysis: analyzing target file {file_path}")
-            self._analyzer.analyze_file(file_path)
+        # Issue #117 Option B: Use topological sort-based staleness resolution
+        # to handle transitive dependencies correctly. This ensures:
+        # - Modified dependency files are re-analyzed before their dependents
+        # - Files with pending relationships are restored in correct order
+        # - Diamond patterns and complex dependency chains are handled properly
+        self._resolve_staleness(file_path)
 
         # Get dependencies for this file from the graph
         dependencies = self._get_file_dependencies(file_path)
@@ -1429,6 +1531,24 @@ class CrossFileContextService:
         """
         return self._injection_logger.get_log_path()
 
+    def get_symbol_cache_statistics(self) -> Optional[Dict[str, Any]]:
+        """Get symbol cache statistics for monitoring.
+
+        Returns statistics about the symbol cache including:
+        - entries: Current number of cached files
+        - max_entries: Maximum cache size
+        - hits: Number of cache hits
+        - misses: Number of cache misses
+        - hit_rate: Cache hit rate (0.0 to 1.0)
+        - invalidations: Number of cache invalidations
+
+        Returns:
+            Dictionary with cache statistics, or None if cache not enabled.
+        """
+        if self._symbol_cache is None:
+            return None
+        return self._symbol_cache.get_statistics()
+
     def get_session_metrics(self) -> SessionMetrics:
         """Get current session metrics without writing to file.
 
@@ -1488,6 +1608,17 @@ class CrossFileContextService:
 
         # Clear graph
         self._graph.clear()
+
+        # Clear RelationshipBuilder if using two-phase analysis (Issue #125)
+        # This prevents memory accumulation in long-running sessions
+        if self._relationship_builder is not None:
+            self._relationship_builder.clear()
+            self._relationship_builder = None
+
+        # Clear SymbolDataCache if using incremental analysis (Issue #125 Phase 3)
+        if self._symbol_cache is not None:
+            self._symbol_cache.invalidate_all()
+            self._symbol_cache = None
 
         # Close injection logger (ensures final flush)
         self._injection_logger.close()

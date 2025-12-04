@@ -103,6 +103,13 @@ Author: Alex Grönholm <alex.gronholm@nextday.fi>
 URL: https://github.com/agronholm/exceptiongroup/blob/main/CHANGES.rst
 --------------------------------------------------------------------------------
 
+Package: execnet
+Version: 2.1.2
+License: MIT
+Author: holger krekel and others
+URL: https://execnet.readthedocs.io/en/latest/
+--------------------------------------------------------------------------------
+
 Package: filelock
 Version: 3.20.0
 License: Unlicense
@@ -311,6 +318,13 @@ Version: 7.0.0
 License: MIT
 Author: Marc Schlaich <marc.schlaich@gmail.com>
 URL: https://pytest-cov.readthedocs.io/en/latest/changelog.html
+--------------------------------------------------------------------------------
+
+Package: pytest-xdist
+Version: 3.8.0
+License: MIT
+Author: holger krekel and contributors <pytest-dev@python.org>, holger@merlinux.eu
+URL: https://github.com/pytest-dev/pytest-xdist
 --------------------------------------------------------------------------------
 
 Package: python-dotenv

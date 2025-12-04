@@ -23,10 +23,17 @@ See TDD Section 3.5.2.3 for detailed specifications.
 import ast
 import builtins
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from xfile_context.detectors.base import RelationshipDetector
-from xfile_context.models import Relationship, RelationshipType
+from xfile_context.models import (
+    ReferenceType,
+    Relationship,
+    RelationshipType,
+    SymbolDefinition,
+    SymbolReference,
+    SymbolType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -329,3 +336,126 @@ class ClassInheritanceDetector(RelationshipDetector):
             Detector name: "ClassInheritanceDetector".
         """
         return "ClassInheritanceDetector"
+
+    def supports_symbol_extraction(self) -> bool:
+        """Check if this detector supports symbol extraction mode.
+
+        Returns:
+            True - ClassInheritanceDetector supports symbol extraction.
+        """
+        return True
+
+    def extract_symbols(
+        self,
+        node: ast.AST,
+        filepath: str,
+        module_ast: ast.Module,
+    ) -> Tuple[List[SymbolDefinition], List[SymbolReference]]:
+        """Extract class definitions and parent class references (Issue #122).
+
+        ClassInheritanceDetector produces both:
+        - Definitions: Class definitions found in the file
+        - References: Parent class references (inheritance relationships)
+
+        Args:
+            node: AST node to analyze.
+            filepath: Absolute path to the file being analyzed.
+            module_ast: The root AST node of the entire module (for context).
+
+        Returns:
+            Tuple of (definitions, references) for class inheritance patterns.
+        """
+        definitions: List[SymbolDefinition] = []
+        references: List[SymbolReference] = []
+
+        if isinstance(node, ast.ClassDef):
+            # Build caches if analyzing a new file
+            if self._cached_filepath != filepath:
+                self._cached_filepath = filepath
+                self._local_classes.clear()
+                self._import_map.clear()
+                self._build_local_class_cache(module_ast)
+
+            # Extract class definition
+            line_end: int = node.end_lineno if node.end_lineno else node.lineno
+
+            # Get decorator names
+            decorators = None
+            if node.decorator_list:
+                decorators = []
+                for dec in node.decorator_list:
+                    if isinstance(dec, ast.Name):
+                        decorators.append(dec.id)
+                    elif isinstance(dec, ast.Attribute):
+                        decorators.append(self._extract_parent_name(dec) or "")
+                    elif isinstance(dec, ast.Call):
+                        # Decorator with arguments: @decorator(args)
+                        if isinstance(dec.func, ast.Name):
+                            decorators.append(dec.func.id)
+                        elif isinstance(dec.func, ast.Attribute):
+                            decorators.append(self._extract_parent_name(dec.func) or "")
+
+            # Get base class names
+            bases = None
+            if node.bases:
+                bases = []
+                for base in node.bases:
+                    base_name = self._extract_parent_name(base)
+                    if base_name:
+                        bases.append(base_name)
+
+            # Extract docstring if present
+            docstring = None
+            if (
+                node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)
+            ):
+                # Get first line of docstring
+                full_doc = node.body[0].value.value
+                docstring = full_doc.split("\n")[0].strip()
+
+            definition = SymbolDefinition(
+                name=node.name,
+                symbol_type=SymbolType.CLASS,
+                line_start=node.lineno,
+                line_end=line_end,
+                signature=f"class {node.name}",
+                decorators=decorators,
+                bases=bases,
+                docstring=docstring,
+            )
+            definitions.append(definition)
+
+            # Extract parent class references
+            if node.bases:
+                for idx, base in enumerate(node.bases):
+                    parent_name = self._extract_parent_name(base)
+                    if parent_name:
+                        resolved_module = self._resolve_parent_class(
+                            parent_name, base, filepath, module_ast
+                        )
+
+                        # Determine if this is a module-qualified reference
+                        module_name = None
+                        if "." in parent_name:
+                            parts = parent_name.split(".")
+                            module_name = ".".join(parts[:-1])
+
+                        ref = SymbolReference(
+                            name=parent_name,
+                            reference_type=ReferenceType.CLASS_REFERENCE,
+                            line_number=node.lineno,
+                            resolved_module=resolved_module,
+                            resolved_symbol=parent_name.split(".")[-1],  # Just the class name
+                            module_name=module_name,
+                            metadata={
+                                "child_class": node.name,
+                                "inheritance_order": str(idx),
+                                "total_parents": str(len(node.bases)),
+                            },
+                        )
+                        references.append(ref)
+
+        return (definitions, references)

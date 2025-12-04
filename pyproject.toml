@@ -42,6 +42,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
     "pytest-asyncio>=0.23.0",
+    "pytest-xdist>=3.5.0",
     "pre-commit>=3.5.0",
     "pip-licenses>=4.3.0",
     "types-PyYAML>=6.0",
@@ -76,6 +77,12 @@ markers = [
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+# pytest-xdist parallel execution configuration
+# Use: pytest -n 2 --dist=loadfile
+# - loadfile ensures all tests in a file run on the same worker
+# - This is safe for module-scoped fixtures
+# - Using -n 2 for stability (auto can cause timing-sensitive test failures)
 
 [tool.mypy]
 mypy_path = "src"
