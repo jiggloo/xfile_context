@@ -139,7 +139,7 @@ class Config:
             return bool(isinstance(value, int) and value > 0)
         elif key == "context_token_limit":
             return bool(isinstance(value, int) and 0 < value < 10000)  # Sanity check from TDD
-        elif key == "function_usage_warning_threshold":
+        elif key == "function_usage_warning_threshold" or key == "symbol_cache_max_entries":
             return bool(isinstance(value, int) and value > 0)
         elif key in ["suppress_warnings", "ignore_patterns"]:
             # Must be a list
