@@ -268,7 +268,7 @@ class TestServiceTwoPhaseIntegration:
 
     @pytest.fixture
     def direct_config(self, tmp_path: Path) -> Config:
-        """Create config with direct analysis (default)."""
+        """Create config with direct analysis (explicitly disabled)."""
         config_file = tmp_path / ".cross_file_context_links.yml"
         config_file.write_text("use_two_phase_analysis: false\n")
         return Config(config_path=config_file)
@@ -369,10 +369,10 @@ class TestServiceTwoPhaseIntegration:
 class TestConfigTwoPhaseOption:
     """Tests for two-phase analysis configuration."""
 
-    def test_config_default_is_direct_mode(self, tmp_path: Path) -> None:
-        """Test default configuration uses direct mode."""
+    def test_config_default_is_two_phase_mode(self, tmp_path: Path) -> None:
+        """Test default configuration uses two-phase mode."""
         config = Config(config_path=tmp_path / "nonexistent.yml")
-        assert config.use_two_phase_analysis is False
+        assert config.use_two_phase_analysis is True
 
     def test_config_enable_two_phase(self, tmp_path: Path) -> None:
         """Test enabling two-phase mode via config."""
@@ -396,4 +396,4 @@ class TestConfigTwoPhaseOption:
         config_file.write_text("use_two_phase_analysis: 'yes'\n")  # Invalid: not a bool
 
         config = Config(config_path=config_file)
-        assert config.use_two_phase_analysis is False  # Default
+        assert config.use_two_phase_analysis is True  # Default

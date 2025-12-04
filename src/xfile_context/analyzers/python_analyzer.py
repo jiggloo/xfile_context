@@ -19,7 +19,7 @@ import concurrent.futures
 import logging
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from xfile_context.detectors.dynamic_pattern_detector import DynamicPatternDetector
 from xfile_context.detectors.registry import DetectorRegistry
@@ -568,6 +568,7 @@ class PythonAnalyzer:
         self,
         filepaths: List[str],
         relationship_builder: Optional[RelationshipBuilder] = None,
+        symbol_cache: Optional[Any] = None,
     ) -> Tuple[int, int, RelationshipBuilder]:
         """Analyze multiple files using two-phase approach with shared builder.
 
@@ -575,24 +576,48 @@ class PythonAnalyzer:
         1. Extracting symbol data from all files first (Phase 1)
         2. Building relationships with cross-file resolution (Phase 2)
 
+        When a symbol_cache is provided, this enables incremental analysis:
+        - Files with valid cached symbols are not re-parsed
+        - Only changed files are re-analyzed
+        - Cache is updated with newly extracted symbols
+
         Args:
             filepaths: List of absolute paths to Python files to analyze.
             relationship_builder: Optional RelationshipBuilder. If None, creates new one.
+            symbol_cache: Optional SymbolDataCache for incremental analysis (Issue #125 Phase 3).
 
         Returns:
             Tuple of (success_count, failed_count, relationship_builder).
             The relationship_builder can be reused for incremental updates.
         """
+        # Import here to avoid circular dependency
+
         if relationship_builder is None:
             relationship_builder = RelationshipBuilder()
 
         success_count = 0
         failed_count = 0
+        cache_hits = 0
 
-        # Phase 1: Extract symbol data from all files
+        # Phase 1: Extract symbol data from all files (with cache support)
         symbol_data_map: Dict[str, FileSymbolData] = {}
         for filepath in filepaths:
-            symbol_data = self.extract_file_symbols(filepath)
+            symbol_data: Optional[FileSymbolData] = None
+
+            # Try to get from cache first
+            if symbol_cache is not None and symbol_cache.is_valid(filepath):
+                symbol_data = symbol_cache.get(filepath)
+                if symbol_data is not None:
+                    cache_hits += 1
+                    logger.debug(f"Cache hit for {filepath}")
+
+            # Extract if not cached
+            if symbol_data is None:
+                symbol_data = self.extract_file_symbols(filepath)
+                # Update cache
+                if symbol_cache is not None and symbol_data is not None and symbol_data.is_valid:
+                    symbol_cache.set(filepath, symbol_data)
+
             if symbol_data is not None and symbol_data.is_valid:
                 symbol_data_map[filepath] = symbol_data
                 relationship_builder.remove_file_data(filepath)
@@ -602,6 +627,9 @@ class PythonAnalyzer:
                 failed_count += 1
             else:
                 failed_count += 1
+
+        if cache_hits > 0:
+            logger.debug(f"Symbol cache: {cache_hits} hits out of {len(filepaths)} files")
 
         # Phase 2: Build relationships for all files with cross-file resolution
         for filepath in symbol_data_map:
