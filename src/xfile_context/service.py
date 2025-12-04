@@ -46,6 +46,7 @@ from xfile_context.injection_logger import (
 )
 from xfile_context.metrics_collector import MetricsCollector, SessionMetrics
 from xfile_context.models import Relationship, RelationshipGraph, RelationshipType
+from xfile_context.staleness_resolver import StalenessResolver
 from xfile_context.storage import GraphExport, InMemoryStore, RelationshipStore
 from xfile_context.warning_formatter import StructuredWarning, WarningEmitter
 
@@ -483,18 +484,21 @@ class CrossFileContextService:
                 warnings=warnings,
             )
 
-        # Lazy initialization: analyze target file if needed (Issue #114)
-        # This ensures context is available on first read without requiring
-        # eager full-project analysis at startup.
+        # Lazy initialization with transitive dependency resolution (Issue #117 Option B)
+        # This ensures context is available on first read and handles stale dependencies.
         #
-        # Note: We only analyze the target file, not its dependencies.
-        # Signature extraction for dependencies uses direct file reads via cache,
-        # so dependencies don't need to be analyzed for context injection.
-        # Analyzing dependencies would remove relationships pointing to them,
-        # breaking the context injection.
-        if self._needs_analysis(file_path):
-            logger.debug(f"Lazy analysis: analyzing target file {file_path}")
-            self._analyzer.analyze_file(file_path)
+        # The StalenessResolver implements a topological sort-based algorithm:
+        # 1. Copy the dependency graph before modifications
+        # 2. Find all stale files in transitive dependency chain
+        # 3. Sort stale files topologically (dependencies before dependents)
+        # 4. Remove relationships and mark dependents as pending
+        # 5. Analyze stale files or restore pending relationships in topological order
+        resolver = StalenessResolver(
+            graph=self._graph,
+            is_file_stale=self._needs_analysis,
+            analyze_file=self._analyzer.analyze_file,
+        )
+        resolver.resolve_staleness(file_path)
 
         # Get dependencies for this file from the graph
         dependencies = self._get_file_dependencies(file_path)

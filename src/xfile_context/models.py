@@ -128,6 +128,11 @@ class FileMetadata:
     deleted: bool = False  # True if file has been deleted
     deletion_time: Optional[float] = None  # Unix timestamp of deletion
 
+    # Pending relationships tracking (Issue #117 Option B)
+    # True if file's relationships were removed from graph but file content is unchanged.
+    # For pending files, relationships can be restored without re-analyzing the file.
+    pending_relationships: bool = False
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to JSON-compatible dict.
 
@@ -142,6 +147,7 @@ class FileMetadata:
             "dynamic_pattern_types": self.dynamic_pattern_types,
             "is_unparseable": self.is_unparseable,
             "deleted": self.deleted,
+            "pending_relationships": self.pending_relationships,
         }
         # Only include deletion_time if it's set
         if self.deletion_time is not None:
@@ -170,6 +176,7 @@ class FileMetadata:
             is_unparseable=data["is_unparseable"],
             deleted=data.get("deleted", False),  # Default False for backward compatibility
             deletion_time=data.get("deletion_time"),  # Default None
+            pending_relationships=data.get("pending_relationships", False),  # Default False
         )
 
 
@@ -196,6 +203,12 @@ class RelationshipGraph:
         self._file_metadata: Dict[str, FileMetadata] = {}
 
         # Note: _circular_groups removed (cycle detection deferred to v0.1.1+, see Section 3.5.5)
+
+        # Pending relationships storage (Issue #117 Option B)
+        # Stores relationships that were removed from the graph but can be restored
+        # without re-analyzing the file (because file content is unchanged).
+        # Key: filepath, Value: list of relationships where file is source
+        self._pending_relationships: Dict[str, List[Relationship]] = {}
 
     def add_relationship(self, rel: Relationship) -> None:
         """Add relationship and update bidirectional indices.
@@ -291,6 +304,141 @@ class RelationshipGraph:
             # Graph may be in inconsistent state - validation will detect issues
             logger.error(f"Graph removal failed for {filepath}: {e}")
             raise
+
+    def store_pending_relationships(self, filepath: str) -> List[Relationship]:
+        """Store relationships for a file before removing them (Issue #117 Option B).
+
+        This captures relationships where the file is the SOURCE before they are
+        removed from the graph. These can later be restored without re-analyzing
+        the file if the file content hasn't changed.
+
+        Args:
+            filepath: Path to file whose relationships should be stored.
+
+        Returns:
+            List of relationships that were stored (where filepath is source).
+        """
+        # Get relationships where this file is the source
+        source_relationships = [rel for rel in self._relationships if rel.source_file == filepath]
+
+        if source_relationships:
+            self._pending_relationships[filepath] = source_relationships
+            logger.debug(f"Stored {len(source_relationships)} pending relationships for {filepath}")
+
+        return source_relationships
+
+    def restore_pending_relationships(self, filepath: str) -> bool:
+        """Restore previously stored relationships for a file (Issue #117 Option B).
+
+        This restores relationships that were stored before removal, allowing
+        the file's relationships to be re-added without re-analyzing the file.
+
+        Args:
+            filepath: Path to file whose relationships should be restored.
+
+        Returns:
+            True if relationships were restored, False if no pending relationships.
+        """
+        if filepath not in self._pending_relationships:
+            return False
+
+        relationships = self._pending_relationships.pop(filepath)
+
+        for rel in relationships:
+            self.add_relationship(rel)
+
+        logger.debug(f"Restored {len(relationships)} relationships for {filepath}")
+        return True
+
+    def get_pending_relationships(self, filepath: str) -> List[Relationship]:
+        """Get stored pending relationships for a file without removing them.
+
+        Args:
+            filepath: Path to file to query.
+
+        Returns:
+            List of pending relationships, or empty list if none stored.
+        """
+        return self._pending_relationships.get(filepath, [])
+
+    def has_pending_relationships(self, filepath: str) -> bool:
+        """Check if a file has stored pending relationships.
+
+        Args:
+            filepath: Path to file to check.
+
+        Returns:
+            True if file has pending relationships stored.
+        """
+        return filepath in self._pending_relationships
+
+    def clear_pending_relationships(self, filepath: str) -> None:
+        """Clear stored pending relationships for a file.
+
+        Args:
+            filepath: Path to file whose pending relationships should be cleared.
+        """
+        if filepath in self._pending_relationships:
+            del self._pending_relationships[filepath]
+
+    def copy_dependency_graph(self) -> Dict[str, Set[str]]:
+        """Create a copy of the dependency graph structure (Issue #117 Option B).
+
+        This is used in Step 1 of the algorithm to preserve the graph structure
+        before removing relationships, so that Step 4 can traverse dependencies
+        using the original graph.
+
+        Returns:
+            Deep copy of the dependencies dict (file -> set of files it depends on).
+        """
+        return {filepath: deps.copy() for filepath, deps in self._dependencies.items()}
+
+    def get_transitive_dependencies(
+        self,
+        filepath: str,
+        dependency_graph: Optional[Dict[str, Set[str]]] = None,
+    ) -> List[str]:
+        """Get all transitive dependencies for a file (Issue #117 Option B).
+
+        Traverses the dependency graph to find all files that the given file
+        depends on, directly or transitively.
+
+        Args:
+            filepath: Path to file to get dependencies for.
+            dependency_graph: Optional pre-copied graph to traverse. If None,
+                uses the current graph state.
+
+        Returns:
+            List of all transitive dependency file paths (not including filepath itself).
+        """
+        graph = dependency_graph if dependency_graph is not None else self._dependencies
+
+        visited: Set[str] = set()
+        result: List[str] = []
+
+        def visit(path: str) -> None:
+            if path in visited:
+                return
+            visited.add(path)
+
+            # Add this path to results (direct and transitive deps)
+            result.append(path)
+
+            # Recursively visit dependencies
+            deps = graph.get(path, set())
+            for dep in deps:
+                # Skip special markers (stdlib, third-party, etc.)
+                if dep.startswith("<") and dep.endswith(">"):
+                    continue
+                visit(dep)
+
+        # Start traversal from the file's direct dependencies
+        for dep in graph.get(filepath, set()):
+            if dep.startswith("<") and dep.endswith(">"):
+                continue
+            visit(dep)
+
+        return result
 
     def export_to_dict(self, project_root: Optional[str] = None) -> Dict[str, Any]:
         """Export graph to JSON-compatible dict (FR-23, FR-25).
@@ -524,6 +672,7 @@ class RelationshipGraph:
         self._dependencies.clear()
         self._dependents.clear()
         self._file_metadata.clear()
+        self._pending_relationships.clear()
 
 
 @dataclass
