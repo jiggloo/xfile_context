@@ -65,6 +65,7 @@ class PythonAnalyzer:
 
     # Configuration constants (TDD Section 3.5.1)
     MAX_FILE_LINES = 10000  # EC-17: Skip files larger than this
+    MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10MB: Prevent memory exhaustion from long lines
     AST_PARSING_TIMEOUT_SECONDS = 5  # Timeout for parsing a single file
     AST_MAX_RECURSION_DEPTH = 100  # Maximum AST traversal depth
 
@@ -154,10 +155,20 @@ class PythonAnalyzer:
         - Permission errors: Log error, return None
         """
         try:
-            # Check file size limit (EC-17)
+            # Check file exists and size limits (EC-17)
             path = Path(filepath)
             if not path.exists():
                 logger.error(f"File not found: {filepath}")
+                return None
+
+            # Check file size in bytes to prevent memory exhaustion from files
+            # with extremely long lines (security: memory exhaustion attack)
+            file_size = path.stat().st_size
+            if file_size > self.MAX_FILE_SIZE_BYTES:
+                logger.warning(
+                    f"⚠️ Skipping analysis of {filepath}: {file_size} bytes "
+                    f"exceeds limit ({self.MAX_FILE_SIZE_BYTES})"
+                )
                 return None
 
             # Count lines before reading entire file
@@ -506,6 +517,11 @@ class PythonAnalyzer:
         This method supports both:
         1. Extract and store: Extract symbols and immediately build relationships
         2. Build from data: Use pre-extracted FileSymbolData to build relationships
+
+        Note: This method currently provides Phase 1 (symbol extraction) but falls back
+        to the original detect() approach for Phase 2 (relationship creation). Full
+        RelationshipBuilder integration is a future enhancement. The method exists to
+        allow symbol data inspection and provide a migration path.
 
         Args:
             filepath: Absolute path to Python file to analyze.
