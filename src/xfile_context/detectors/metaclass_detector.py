@@ -25,7 +25,7 @@ Related Requirements:
 
 import ast
 import logging
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from xfile_context.detectors.dynamic_pattern_detector import (
     DynamicPatternDetector,
@@ -33,6 +33,8 @@ from xfile_context.detectors.dynamic_pattern_detector import (
     DynamicPatternWarning,
     WarningSeverity,
 )
+from xfile_context.models import SymbolDefinition, SymbolReference, SymbolType
+from xfile_context.pytest_config_parser import is_test_module
 
 logger = logging.getLogger(__name__)
 
@@ -194,3 +196,128 @@ class MetaclassDetector(DynamicPatternDetector):
             "MetaclassDetector"
         """
         return "MetaclassDetector"
+
+    def extract_symbols(
+        self,
+        node: ast.AST,
+        filepath: str,
+        module_ast: ast.Module,
+    ) -> Tuple[List[SymbolDefinition], List[SymbolReference]]:
+        """Extract class definitions with metaclasses (Issue #122).
+
+        MetaclassDetector can produce definitions for classes with metaclasses.
+        The definition includes metaclass information in the metadata.
+
+        Args:
+            node: AST node to analyze.
+            filepath: Absolute path to the file being analyzed.
+            module_ast: The root AST node of the entire module (for context).
+
+        Returns:
+            Tuple of (definitions, []) - metaclass classes produce definitions.
+        """
+        definitions: List[SymbolDefinition] = []
+
+        # Only process ClassDef nodes
+        if not isinstance(node, ast.ClassDef):
+            return ([], [])
+
+        # Check for metaclass keyword
+        metaclass_name = None
+        for keyword in node.keywords:
+            if keyword.arg == "metaclass":
+                metaclass_name = self._get_metaclass_name(keyword.value)
+                break
+
+        if not metaclass_name:
+            return ([], [])
+
+        # Check if this is a test module (with caching)
+        if self._cached_filepath != filepath:
+            self._cached_filepath = filepath
+            self._cached_is_test = is_test_module(filepath, self._project_root)
+
+        # Build class definition
+        line_end: int = node.end_lineno if node.end_lineno else node.lineno
+
+        # Get decorator names
+        decorators = None
+        if node.decorator_list:
+            decorators = []
+            for dec in node.decorator_list:
+                if isinstance(dec, ast.Name):
+                    decorators.append(dec.id)
+                elif isinstance(dec, ast.Attribute):
+                    parts = [dec.attr]
+                    current = dec.value
+                    while isinstance(current, ast.Attribute):
+                        parts.append(current.attr)
+                        current = current.value
+                    if isinstance(current, ast.Name):
+                        parts.append(current.id)
+                    decorators.append(".".join(reversed(parts)))
+                elif isinstance(dec, ast.Call):
+                    if isinstance(dec.func, ast.Name):
+                        decorators.append(dec.func.id)
+                    elif isinstance(dec.func, ast.Attribute):
+                        parts = [dec.func.attr]
+                        current = dec.func.value
+                        while isinstance(current, ast.Attribute):
+                            parts.append(current.attr)
+                            current = current.value
+                        if isinstance(current, ast.Name):
+                            parts.append(current.id)
+                        decorators.append(".".join(reversed(parts)))
+
+        # Get base class names
+        bases = None
+        if node.bases:
+            bases = []
+            for base in node.bases:
+                if isinstance(base, ast.Name):
+                    bases.append(base.id)
+                elif isinstance(base, ast.Attribute):
+                    parts = [base.attr]
+                    current = base.value
+                    while isinstance(current, ast.Attribute):
+                        parts.append(current.attr)
+                        current = current.value
+                    if isinstance(current, ast.Name):
+                        parts.append(current.id)
+                    bases.append(".".join(reversed(parts)))
+
+        # Extract docstring if present
+        docstring = None
+        if (
+            node.body
+            and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Constant)
+            and isinstance(node.body[0].value.value, str)
+        ):
+            full_doc = node.body[0].value.value
+            docstring = full_doc.split("\n")[0].strip()
+
+        definition = SymbolDefinition(
+            name=node.name,
+            symbol_type=SymbolType.CLASS,
+            line_start=node.lineno,
+            line_end=line_end,
+            signature=f"class {node.name}(metaclass={metaclass_name})",
+            decorators=decorators,
+            bases=bases,
+            docstring=docstring,
+        )
+        definitions.append(definition)
+
+        # Also detect pattern and emit warnings for non-standard metaclasses
+        warning = self._check_metaclass(
+            [kw for kw in node.keywords if kw.arg == "metaclass"][0],
+            node,
+            filepath,
+            self._cached_is_test,
+        )
+        if warning:
+            self._warnings.append(warning)
+            self._emit_warning(warning)
+
+        return (definitions, [])

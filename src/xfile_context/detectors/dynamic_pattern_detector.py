@@ -28,9 +28,10 @@ import logging
 from abc import abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 from xfile_context.detectors.base import RelationshipDetector
+from xfile_context.models import SymbolDefinition, SymbolReference
 from xfile_context.pytest_config_parser import is_test_module
 
 logger = logging.getLogger(__name__)
@@ -249,3 +250,56 @@ class DynamicPatternDetector(RelationshipDetector):
             Human-readable detector name.
         """
         pass
+
+    def supports_symbol_extraction(self) -> bool:
+        """Check if this detector supports symbol extraction mode.
+
+        Dynamic pattern detectors support symbol extraction but return empty
+        results per FR-42 (fail-safe - do not add incorrect relationships).
+
+        Returns:
+            True - DynamicPatternDetector supports symbol extraction.
+        """
+        return True
+
+    def extract_symbols(
+        self,
+        node: ast.AST,
+        filepath: str,
+        module_ast: ast.Module,
+    ) -> Tuple[List[SymbolDefinition], List[SymbolReference]]:
+        """Extract symbols from an AST node (Issue #122).
+
+        Dynamic pattern detectors do NOT produce definitions or references
+        per FR-42 (fail-safe). They detect patterns and emit warnings, but
+        do not create relationships that could be incorrect.
+
+        This base implementation:
+        1. Detects the pattern (to emit warnings)
+        2. Returns empty lists (no definitions or references)
+
+        Subclasses may override this method to provide additional symbol
+        extraction behavior if their pattern can produce valid symbols.
+
+        Args:
+            node: AST node to analyze.
+            filepath: Absolute path to the file being analyzed.
+            module_ast: The root AST node of the entire module (for context).
+
+        Returns:
+            Tuple of ([], []) - dynamic patterns do not produce symbols.
+        """
+        # Check if this is a test module (with caching)
+        if self._cached_filepath != filepath:
+            self._cached_filepath = filepath
+            self._cached_is_test = is_test_module(filepath, self._project_root)
+
+        # Try to detect the pattern (to emit warnings)
+        warning = self._detect_pattern(node, filepath, module_ast, self._cached_is_test)
+
+        if warning:
+            self._warnings.append(warning)
+            self._emit_warning(warning)
+
+        # FR-42: Return empty lists - do NOT add incorrect relationships
+        return ([], [])

@@ -20,11 +20,11 @@ See TDD Section 3.5.2.5 (EC-5) for detailed specifications.
 
 import ast
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from xfile_context.detectors.base import RelationshipDetector
 from xfile_context.detectors.import_detector import ImportDetector
-from xfile_context.models import Relationship
+from xfile_context.models import Relationship, SymbolDefinition, SymbolReference
 
 logger = logging.getLogger(__name__)
 
@@ -285,3 +285,69 @@ class ConditionalImportDetector(RelationshipDetector):
             Detector name: "ConditionalImportDetector".
         """
         return "ConditionalImportDetector"
+
+    def supports_symbol_extraction(self) -> bool:
+        """Check if this detector supports symbol extraction mode.
+
+        Returns:
+            True - ConditionalImportDetector supports symbol extraction.
+        """
+        return True
+
+    def extract_symbols(
+        self,
+        node: ast.AST,
+        filepath: str,
+        module_ast: ast.Module,
+    ) -> Tuple[List[SymbolDefinition], List[SymbolReference]]:
+        """Extract conditional import references from an AST node (Issue #122).
+
+        ConditionalImportDetector only produces references (conditional imports),
+        not definitions.
+
+        Args:
+            node: AST node to analyze.
+            filepath: Absolute path to the file being analyzed.
+            module_ast: The root AST node of the entire module (for context).
+
+        Returns:
+            Tuple of ([], references) - conditional imports produce references only.
+        """
+        references: List[SymbolReference] = []
+
+        # Only process If nodes
+        if not isinstance(node, ast.If):
+            return ([], references)
+
+        # Check if this is a conditional import pattern
+        try:
+            condition_info = self._analyze_condition(node.test)
+        except (AttributeError, TypeError):
+            return ([], references)
+
+        if not condition_info:
+            return ([], references)
+
+        # Process imports only in the immediate body of this If node
+        for stmt in node.body:
+            if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+                # Use ImportDetector's extract_symbols to get base references
+                import_defs, import_refs = self._import_detector.extract_symbols(
+                    stmt, filepath, module_ast
+                )
+
+                # Enhance each reference with conditional metadata
+                for ref in import_refs:
+                    # Mark as conditional and add condition info
+                    ref.is_conditional = True
+
+                    # Update metadata with conditional information
+                    if ref.metadata is None:
+                        ref.metadata = {}
+                    ref.metadata["conditional"] = "true"
+                    ref.metadata["condition_type"] = condition_info["type"]
+                    ref.metadata["condition_expr"] = condition_info["expr"]
+
+                    references.append(ref)
+
+        return ([], references)
