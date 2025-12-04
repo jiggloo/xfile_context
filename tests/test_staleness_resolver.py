@@ -598,3 +598,424 @@ class TestCopyDependencyGraph:
 
         assert "/b.py" in copied.get("/a.py", set())
         assert "/c.py" in copied.get("/b.py", set())
+
+
+class TestComplexScenarios:
+    """Test complex multi-file scenarios from Issue #117."""
+
+    def test_complex_multi_file_scenario_from_issue_117(self):
+        """Test the specific scenario described in Issue #117 comment.
+
+        Graph structure:
+        - file A imports file B
+        - file B imports file C
+        - file C imports file D
+        - file X imports file A
+        - file X imports file D
+        - file Y imports file B
+
+        When A is stale and read_with_context(A) is called, the algorithm should:
+        1. Analyze A (stale)
+        2. Mark X as pending (depends on A)
+        3. Leave Y's relationships intact (Y depends on B, not in chain from A)
+        """
+        graph = RelationshipGraph()
+
+        # Build the complex graph
+        # A -> B
+        graph.add_relationship(
+            Relationship(
+                source_file="/a.py",
+                target_file="/b.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="b",
+                line_number=1,
+            )
+        )
+        # B -> C
+        graph.add_relationship(
+            Relationship(
+                source_file="/b.py",
+                target_file="/c.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="c",
+                line_number=1,
+            )
+        )
+        # C -> D
+        graph.add_relationship(
+            Relationship(
+                source_file="/c.py",
+                target_file="/d.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="d",
+                line_number=1,
+            )
+        )
+        # X -> A
+        graph.add_relationship(
+            Relationship(
+                source_file="/x.py",
+                target_file="/a.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="a",
+                line_number=1,
+            )
+        )
+        # X -> D
+        graph.add_relationship(
+            Relationship(
+                source_file="/x.py",
+                target_file="/d.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="d",
+                line_number=2,
+            )
+        )
+        # Y -> B
+        graph.add_relationship(
+            Relationship(
+                source_file="/y.py",
+                target_file="/b.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="b",
+                line_number=1,
+            )
+        )
+
+        # Add metadata for all files
+        for path in ["/a.py", "/b.py", "/c.py", "/d.py", "/x.py", "/y.py"]:
+            graph.set_file_metadata(
+                path,
+                FileMetadata(
+                    filepath=path,
+                    last_analyzed=1000.0,
+                    relationship_count=1,
+                    has_dynamic_patterns=False,
+                    dynamic_pattern_types=[],
+                    is_unparseable=False,
+                ),
+            )
+
+        analyzed: List[str] = []
+        # Only A is stale
+        stale_files = {"/a.py"}
+
+        resolver = StalenessResolver(
+            graph=graph,
+            is_file_stale=lambda f: f in stale_files,
+            analyze_file=lambda f: (analyzed.append(f), True)[1],
+        )
+
+        resolver.resolve_staleness("/a.py")
+
+        # A should be analyzed
+        assert "/a.py" in analyzed
+        # B, C, D should NOT be analyzed (not stale)
+        assert "/b.py" not in analyzed
+        assert "/c.py" not in analyzed
+        assert "/d.py" not in analyzed
+
+        # X should be marked as pending (depends on A)
+        x_meta = graph.get_file_metadata("/x.py")
+        assert x_meta is not None
+        assert x_meta.pending_relationships is True
+
+    def test_multiple_stale_in_chain(self):
+        """Test when multiple files in the chain are stale (A and C).
+
+        From Issue #117: When A and C are stale but B is not:
+        - Topological order should be [C, A] (C has no stale deps)
+        - B should be marked pending but NOT re-analyzed
+        """
+        graph = RelationshipGraph()
+
+        # A -> B -> C
+        graph.add_relationship(
+            Relationship(
+                source_file="/a.py",
+                target_file="/b.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="b",
+                line_number=1,
+            )
+        )
+        graph.add_relationship(
+            Relationship(
+                source_file="/b.py",
+                target_file="/c.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="c",
+                line_number=1,
+            )
+        )
+
+        # Add metadata for all files
+        for path in ["/a.py", "/b.py", "/c.py"]:
+            graph.set_file_metadata(
+                path,
+                FileMetadata(
+                    filepath=path,
+                    last_analyzed=1000.0,
+                    relationship_count=1,
+                    has_dynamic_patterns=False,
+                    dynamic_pattern_types=[],
+                    is_unparseable=False,
+                ),
+            )
+
+        analyzed: List[str] = []
+        # A and C are stale, B is not
+        stale_files = {"/a.py", "/c.py"}
+
+        resolver = StalenessResolver(
+            graph=graph,
+            is_file_stale=lambda f: f in stale_files,
+            analyze_file=lambda f: (analyzed.append(f), True)[1],
+        )
+
+        resolver.resolve_staleness("/a.py")
+
+        # Both A and C should be analyzed
+        assert set(analyzed) == {"/a.py", "/c.py"}
+        # C should be analyzed before A (topological order)
+        assert analyzed.index("/c.py") < analyzed.index("/a.py")
+        # B should NOT be analyzed (not stale)
+        assert "/b.py" not in analyzed
+
+    def test_all_transitive_deps_stale(self):
+        """Test Issue #117 scenario: A, B, and C all stale.
+
+        From Issue #117: Topological sort should be [C, B, A].
+        """
+        graph = RelationshipGraph()
+
+        # A -> B -> C -> D
+        graph.add_relationship(
+            Relationship(
+                source_file="/a.py",
+                target_file="/b.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="b",
+                line_number=1,
+            )
+        )
+        graph.add_relationship(
+            Relationship(
+                source_file="/b.py",
+                target_file="/c.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="c",
+                line_number=1,
+            )
+        )
+        graph.add_relationship(
+            Relationship(
+                source_file="/c.py",
+                target_file="/d.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="d",
+                line_number=1,
+            )
+        )
+
+        analyzed: List[str] = []
+        # A, B, C are stale; D is not
+        stale_files = {"/a.py", "/b.py", "/c.py"}
+
+        resolver = StalenessResolver(
+            graph=graph,
+            is_file_stale=lambda f: f in stale_files,
+            analyze_file=lambda f: (analyzed.append(f), True)[1],
+        )
+
+        resolver.resolve_staleness("/a.py")
+
+        # All stale files should be analyzed
+        assert set(analyzed) == {"/a.py", "/b.py", "/c.py"}
+        # Order: C first (deepest), then B, then A
+        assert analyzed.index("/c.py") < analyzed.index("/b.py")
+        assert analyzed.index("/b.py") < analyzed.index("/a.py")
+
+
+class TestCycleHandling:
+    """Test cases for circular dependency handling (Review finding #2)."""
+
+    def test_topological_sort_with_simple_cycle(self) -> None:
+        """Test that A -> B -> A cycle is detected and handled gracefully."""
+        graph = RelationshipGraph()
+
+        # Create cycle: A -> B -> A
+        graph.add_relationship(
+            Relationship(
+                source_file="/a.py",
+                target_file="/b.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="b",
+                line_number=1,
+            )
+        )
+        graph.add_relationship(
+            Relationship(
+                source_file="/b.py",
+                target_file="/a.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="a",
+                line_number=1,
+            )
+        )
+
+        analyzed: List[str] = []
+        stale_files = {"/a.py", "/b.py"}
+
+        def track_analysis(f: str) -> bool:
+            analyzed.append(f)
+            return True
+
+        resolver = StalenessResolver(
+            graph=graph,
+            is_file_stale=lambda f: f in stale_files,
+            analyze_file=track_analysis,
+        )
+
+        # Should not raise exception - handles cycle gracefully
+        result = resolver.resolve_staleness("/a.py")
+
+        # Both files should be analyzed (order may vary due to cycle)
+        assert set(analyzed) == {"/a.py", "/b.py"}
+        assert set(result) == {"/a.py", "/b.py"}
+
+    def test_topological_sort_with_three_file_cycle(self) -> None:
+        """Test that A -> B -> C -> A cycle is handled gracefully."""
+        graph = RelationshipGraph()
+
+        # Create cycle: A -> B -> C -> A
+        graph.add_relationship(
+            Relationship(
+                source_file="/a.py",
+                target_file="/b.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="b",
+                line_number=1,
+            )
+        )
+        graph.add_relationship(
+            Relationship(
+                source_file="/b.py",
+                target_file="/c.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="c",
+                line_number=1,
+            )
+        )
+        graph.add_relationship(
+            Relationship(
+                source_file="/c.py",
+                target_file="/a.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="a",
+                line_number=1,
+            )
+        )
+
+        analyzed: List[str] = []
+        stale_files = {"/a.py", "/b.py", "/c.py"}
+
+        def track_analysis(f: str) -> bool:
+            analyzed.append(f)
+            return True
+
+        resolver = StalenessResolver(
+            graph=graph,
+            is_file_stale=lambda f: f in stale_files,
+            analyze_file=track_analysis,
+        )
+
+        result = resolver.resolve_staleness("/a.py")
+
+        # All files should be analyzed
+        assert set(analyzed) == {"/a.py", "/b.py", "/c.py"}
+        assert set(result) == {"/a.py", "/b.py", "/c.py"}
+
+    def test_partial_cycle_with_external_dependency(self) -> None:
+        """Test cycle where only some files in cycle are stale.
+
+        Graph: A -> B -> C -> A, and B -> D (D is outside cycle, not stale)
+        Only A and C are stale.
+        """
+        graph = RelationshipGraph()
+
+        # Cycle: A -> B -> C -> A
+        graph.add_relationship(
+            Relationship(
+                source_file="/a.py",
+                target_file="/b.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="b",
+                line_number=1,
+            )
+        )
+        graph.add_relationship(
+            Relationship(
+                source_file="/b.py",
+                target_file="/c.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="c",
+                line_number=1,
+            )
+        )
+        graph.add_relationship(
+            Relationship(
+                source_file="/c.py",
+                target_file="/a.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="a",
+                line_number=1,
+            )
+        )
+        # External dependency
+        graph.add_relationship(
+            Relationship(
+                source_file="/b.py",
+                target_file="/d.py",
+                relationship_type=RelationshipType.IMPORT,
+                target_symbol="d",
+                line_number=2,
+            )
+        )
+
+        # Add metadata for all files
+        for path in ["/a.py", "/b.py", "/c.py", "/d.py"]:
+            graph.set_file_metadata(
+                path,
+                FileMetadata(
+                    filepath=path,
+                    last_analyzed=1000.0,
+                    relationship_count=1,
+                    has_dynamic_patterns=False,
+                    dynamic_pattern_types=[],
+                    is_unparseable=False,
+                ),
+            )
+
+        analyzed: List[str] = []
+        # Only A and C are stale
+        stale_files = {"/a.py", "/c.py"}
+
+        def track_analysis(f: str) -> bool:
+            analyzed.append(f)
+            return True
+
+        resolver = StalenessResolver(
+            graph=graph,
+            is_file_stale=lambda f: f in stale_files,
+            analyze_file=track_analysis,
+        )
+
+        result = resolver.resolve_staleness("/a.py")
+
+        # Only stale files should be analyzed
+        assert set(analyzed) == {"/a.py", "/c.py"}
+        # B should be in result (pending restoration) but not analyzed
+        assert "/a.py" in result
+        assert "/c.py" in result
