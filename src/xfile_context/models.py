@@ -11,6 +11,13 @@ This module defines the foundational data structures used throughout the system:
 - CacheEntry: Cached file snippets for working memory
 - CacheStatistics: Performance metrics for the cache
 
+Intermediate AST data models (Issue #122):
+- SymbolType: Types of symbol definitions
+- ReferenceType: Types of symbol references
+- SymbolDefinition: A symbol defined in a file (function, class, etc.)
+- SymbolReference: A reference to a symbol from another file
+- FileSymbolData: All definitions and references for a single file
+
 All models use JSON-compatible primitives (DD-4) for serialization.
 """
 
@@ -34,6 +41,282 @@ class RelationshipType:
     CLASS_INHERITANCE = "inheritance"  # class Foo(Bar)
     WILDCARD_IMPORT = "wildcard_import"  # from foo import *
     CONDITIONAL_IMPORT = "conditional_import"  # if TYPE_CHECKING: import
+
+
+class SymbolType:
+    """Types of symbols that can be defined in a file.
+
+    Design: Using class constants (not Enum) for JSON-compatible strings (DD-4).
+    """
+
+    FUNCTION = "function"  # def foo(): or async def foo():
+    CLASS = "class"  # class Foo:
+    METHOD = "method"  # def foo(self): inside a class
+    VARIABLE = "variable"  # module-level assignment: foo = ...
+    CONSTANT = "constant"  # module-level UPPER_CASE = ...
+
+
+class ReferenceType:
+    """Types of references to symbols in other files.
+
+    Design: Using class constants (not Enum) for JSON-compatible strings (DD-4).
+    """
+
+    IMPORT = "import"  # import foo or from foo import bar
+    FUNCTION_CALL = "function_call"  # foo() or module.foo()
+    CLASS_REFERENCE = "class_reference"  # class Foo(Bar): where Bar is imported
+    ATTRIBUTE_ACCESS = "attribute_access"  # module.attribute
+
+
+@dataclass
+class SymbolDefinition:
+    """A symbol defined in a Python file.
+
+    Represents functions, classes, methods, and module-level assignments.
+    Used by FileSymbolData to track all definitions in a file.
+
+    Design Constraint (DD-4): Uses primitives only for easy serialization.
+    """
+
+    name: str  # Symbol name (e.g., "my_function", "MyClass")
+    symbol_type: str  # SymbolType value
+    line_start: int  # First line of definition
+    line_end: int  # Last line of definition (inclusive)
+
+    # Optional fields for richer information
+    signature: Optional[str] = None  # Function/method signature (e.g., "def foo(a, b):")
+    decorators: Optional[List[str]] = None  # List of decorator names
+    bases: Optional[List[str]] = None  # For classes: base class names
+    docstring: Optional[str] = None  # First line of docstring if present
+    parent_class: Optional[str] = None  # For methods: containing class name
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to JSON-compatible dict."""
+        result: Dict[str, Any] = {
+            "name": self.name,
+            "symbol_type": self.symbol_type,
+            "line_start": self.line_start,
+            "line_end": self.line_end,
+        }
+        if self.signature is not None:
+            result["signature"] = self.signature
+        if self.decorators is not None:
+            result["decorators"] = self.decorators
+        if self.bases is not None:
+            result["bases"] = self.bases
+        if self.docstring is not None:
+            result["docstring"] = self.docstring
+        if self.parent_class is not None:
+            result["parent_class"] = self.parent_class
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SymbolDefinition":
+        """Deserialize from JSON-compatible dict."""
+        return cls(
+            name=data["name"],
+            symbol_type=data["symbol_type"],
+            line_start=data["line_start"],
+            line_end=data["line_end"],
+            signature=data.get("signature"),
+            decorators=data.get("decorators"),
+            bases=data.get("bases"),
+            docstring=data.get("docstring"),
+            parent_class=data.get("parent_class"),
+        )
+
+
+@dataclass
+class SymbolReference:
+    """A reference to a symbol from another file.
+
+    Represents imports, function calls, class references, and attribute accesses.
+    Used by FileSymbolData to track all references in a file.
+
+    Design Constraint (DD-4): Uses primitives only for easy serialization.
+    """
+
+    name: str  # Referenced symbol name (e.g., "foo", "module.bar")
+    reference_type: str  # ReferenceType value
+    line_number: int  # Line where reference occurs
+
+    # Resolution information (populated during analysis)
+    resolved_module: Optional[str] = None  # Resolved module path or marker
+    resolved_symbol: Optional[str] = None  # Resolved symbol name in target module
+
+    # Import-specific fields
+    module_name: Optional[str] = None  # For imports: the module being imported
+    is_relative: bool = False  # True for relative imports (from . import)
+    relative_level: int = 0  # Number of dots (1 for ., 2 for .., etc.)
+    alias: Optional[str] = None  # Import alias (import foo as bar -> alias="bar")
+    is_wildcard: bool = False  # True for "from module import *"
+    is_conditional: bool = False  # True if inside TYPE_CHECKING or version check
+
+    # Call-specific fields
+    is_method_call: bool = False  # True if calling a method on an object
+    caller_context: Optional[str] = None  # Enclosing function/class name
+
+    # Metadata (JSON-compatible dict for extensibility)
+    metadata: Optional[Dict[str, str]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to JSON-compatible dict."""
+        result: Dict[str, Any] = {
+            "name": self.name,
+            "reference_type": self.reference_type,
+            "line_number": self.line_number,
+        }
+        if self.resolved_module is not None:
+            result["resolved_module"] = self.resolved_module
+        if self.resolved_symbol is not None:
+            result["resolved_symbol"] = self.resolved_symbol
+        if self.module_name is not None:
+            result["module_name"] = self.module_name
+        if self.is_relative:
+            result["is_relative"] = self.is_relative
+        if self.relative_level > 0:
+            result["relative_level"] = self.relative_level
+        if self.alias is not None:
+            result["alias"] = self.alias
+        if self.is_wildcard:
+            result["is_wildcard"] = self.is_wildcard
+        if self.is_conditional:
+            result["is_conditional"] = self.is_conditional
+        if self.is_method_call:
+            result["is_method_call"] = self.is_method_call
+        if self.caller_context is not None:
+            result["caller_context"] = self.caller_context
+        if self.metadata is not None:
+            result["metadata"] = self.metadata
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SymbolReference":
+        """Deserialize from JSON-compatible dict."""
+        return cls(
+            name=data["name"],
+            reference_type=data["reference_type"],
+            line_number=data["line_number"],
+            resolved_module=data.get("resolved_module"),
+            resolved_symbol=data.get("resolved_symbol"),
+            module_name=data.get("module_name"),
+            is_relative=data.get("is_relative", False),
+            relative_level=data.get("relative_level", 0),
+            alias=data.get("alias"),
+            is_wildcard=data.get("is_wildcard", False),
+            is_conditional=data.get("is_conditional", False),
+            is_method_call=data.get("is_method_call", False),
+            caller_context=data.get("caller_context"),
+            metadata=data.get("metadata"),
+        )
+
+
+@dataclass
+class FileSymbolData:
+    """Intermediate data model for AST-parsed file data (Issue #122).
+
+    This model captures all definitions and references in a Python file,
+    serving as an intermediate representation between AST parsing and
+    relationship generation.
+
+    Flow: Python AST -> FileSymbolData -> Relationships
+
+    Benefits:
+    - Separation of concerns: AST parsing vs relationship resolution
+    - Inspectable intermediate state for debugging
+    - Enables cross-file symbol resolution
+    - Can be cached/stored independently of relationships
+
+    Design Constraint (DD-4): Uses primitives only for easy serialization.
+    """
+
+    filepath: str  # Absolute path to the file
+    definitions: List[SymbolDefinition]  # All symbols defined in this file
+    references: List[SymbolReference]  # All references to other files/symbols
+
+    # Parsing metadata
+    parse_time: float  # Unix timestamp when file was parsed
+    is_valid: bool = True  # False if file has syntax errors
+    error_message: Optional[str] = None  # Syntax error message if not valid
+
+    # Dynamic pattern tracking (for warnings)
+    has_dynamic_patterns: bool = False
+    dynamic_pattern_types: Optional[List[str]] = None
+
+    def get_definition(self, name: str) -> Optional[SymbolDefinition]:
+        """Look up a definition by name.
+
+        Args:
+            name: Symbol name to find.
+
+        Returns:
+            SymbolDefinition if found, None otherwise.
+        """
+        for defn in self.definitions:
+            if defn.name == name:
+                return defn
+        return None
+
+    def get_definitions_by_type(self, symbol_type: str) -> List[SymbolDefinition]:
+        """Get all definitions of a specific type.
+
+        Args:
+            symbol_type: SymbolType value to filter by.
+
+        Returns:
+            List of matching definitions.
+        """
+        return [d for d in self.definitions if d.symbol_type == symbol_type]
+
+    def get_references_by_type(self, reference_type: str) -> List[SymbolReference]:
+        """Get all references of a specific type.
+
+        Args:
+            reference_type: ReferenceType value to filter by.
+
+        Returns:
+            List of matching references.
+        """
+        return [r for r in self.references if r.reference_type == reference_type]
+
+    def get_import_references(self) -> List[SymbolReference]:
+        """Get all import references.
+
+        Returns:
+            List of import references (regular, wildcard, conditional).
+        """
+        return [r for r in self.references if r.reference_type == ReferenceType.IMPORT]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to JSON-compatible dict."""
+        result: Dict[str, Any] = {
+            "filepath": self.filepath,
+            "definitions": [d.to_dict() for d in self.definitions],
+            "references": [r.to_dict() for r in self.references],
+            "parse_time": self.parse_time,
+            "is_valid": self.is_valid,
+        }
+        if self.error_message is not None:
+            result["error_message"] = self.error_message
+        if self.has_dynamic_patterns:
+            result["has_dynamic_patterns"] = self.has_dynamic_patterns
+        if self.dynamic_pattern_types is not None:
+            result["dynamic_pattern_types"] = self.dynamic_pattern_types
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "FileSymbolData":
+        """Deserialize from JSON-compatible dict."""
+        return cls(
+            filepath=data["filepath"],
+            definitions=[SymbolDefinition.from_dict(d) for d in data["definitions"]],
+            references=[SymbolReference.from_dict(r) for r in data["references"]],
+            parse_time=data["parse_time"],
+            is_valid=data.get("is_valid", True),
+            error_message=data.get("error_message"),
+            has_dynamic_patterns=data.get("has_dynamic_patterns", False),
+            dynamic_pattern_types=data.get("dynamic_pattern_types"),
+        )
 
 
 @dataclass

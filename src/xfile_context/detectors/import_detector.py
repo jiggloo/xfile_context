@@ -25,10 +25,16 @@ import ast
 import logging
 import sys
 from pathlib import Path
-from typing import FrozenSet, List, Optional
+from typing import FrozenSet, List, Optional, Tuple
 
 from xfile_context.detectors.base import RelationshipDetector
-from xfile_context.models import Relationship, RelationshipType
+from xfile_context.models import (
+    ReferenceType,
+    Relationship,
+    RelationshipType,
+    SymbolDefinition,
+    SymbolReference,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -535,3 +541,106 @@ class ImportDetector(RelationshipDetector):
             Detector name: "ImportDetector".
         """
         return "ImportDetector"
+
+    def supports_symbol_extraction(self) -> bool:
+        """Check if this detector supports symbol extraction mode.
+
+        Returns:
+            True - ImportDetector supports symbol extraction.
+        """
+        return True
+
+    def extract_symbols(
+        self,
+        node: ast.AST,
+        filepath: str,
+        module_ast: ast.Module,
+    ) -> Tuple[List[SymbolDefinition], List[SymbolReference]]:
+        """Extract import references from an AST node (Issue #122).
+
+        ImportDetector only produces references (imports), not definitions.
+        Definitions for imported symbols would come from the target files.
+
+        Args:
+            node: AST node to analyze.
+            filepath: Absolute path to the file being analyzed.
+            module_ast: The root AST node of the entire module (for context).
+
+        Returns:
+            Tuple of ([], references) - imports produce references, not definitions.
+        """
+        references: List[SymbolReference] = []
+
+        # Handle 'import module' statements
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module_name = alias.name
+                resolved_module = self._resolve_module(module_name, filepath)
+
+                ref = SymbolReference(
+                    name=alias.asname if alias.asname else alias.name,
+                    reference_type=ReferenceType.IMPORT,
+                    line_number=node.lineno,
+                    resolved_module=resolved_module,
+                    resolved_symbol=alias.name,  # The actual imported module/symbol
+                    module_name=module_name,
+                    is_relative=False,
+                    relative_level=0,
+                    alias=alias.asname,
+                    is_wildcard=False,
+                    is_conditional=False,
+                    metadata={
+                        "import_style": "import_as" if alias.asname else "import",
+                    },
+                )
+                references.append(ref)
+
+        # Handle 'from module import name' statements
+        elif isinstance(node, ast.ImportFrom):
+            module_name = node.module if node.module else ""
+            level = node.level if node.level else 0
+
+            for alias in node.names:
+                # For relative imports with no module (e.g., 'from . import utils'),
+                # the target module is in alias.name, not node.module
+                if level > 0 and not module_name:
+                    actual_module_name = alias.name if alias.name != "*" else ""
+                else:
+                    actual_module_name = module_name
+
+                # Resolve module path
+                if level > 0:
+                    resolved_module = self._resolve_relative_import(
+                        actual_module_name, filepath, level
+                    )
+                else:
+                    resolved_module = self._resolve_module(actual_module_name, filepath)
+
+                # Determine import style
+                if alias.name == "*":
+                    import_style = "from_import_wildcard"
+                elif alias.asname:
+                    import_style = "from_import_as"
+                else:
+                    import_style = "from_import"
+
+                ref = SymbolReference(
+                    name=alias.asname if alias.asname else alias.name,
+                    reference_type=ReferenceType.IMPORT,
+                    line_number=node.lineno,
+                    resolved_module=resolved_module,
+                    resolved_symbol=alias.name,
+                    module_name=module_name if module_name else f"{'.' * level}",
+                    is_relative=(level > 0),
+                    relative_level=level,
+                    alias=alias.asname,
+                    is_wildcard=(alias.name == "*"),
+                    is_conditional=False,  # Conditional detection is done by another detector
+                    metadata={
+                        "import_style": import_style,
+                    },
+                )
+                references.append(ref)
+
+        # ImportDetector doesn't produce definitions (imports don't define symbols)
+        return ([], references)

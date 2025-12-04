@@ -27,10 +27,16 @@ See TDD Section 3.5.2.2 for detailed specifications.
 import ast
 import builtins
 import logging
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from xfile_context.detectors.base import RelationshipDetector
-from xfile_context.models import Relationship, RelationshipType
+from xfile_context.models import (
+    ReferenceType,
+    Relationship,
+    RelationshipType,
+    SymbolDefinition,
+    SymbolReference,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -406,3 +412,95 @@ class FunctionCallDetector(RelationshipDetector):
             Detector name: "FunctionCallDetector".
         """
         return "FunctionCallDetector"
+
+    def supports_symbol_extraction(self) -> bool:
+        """Check if this detector supports symbol extraction mode.
+
+        Returns:
+            True - FunctionCallDetector supports symbol extraction.
+        """
+        return True
+
+    def extract_symbols(
+        self,
+        node: ast.AST,
+        filepath: str,
+        module_ast: ast.Module,
+    ) -> Tuple[List[SymbolDefinition], List[SymbolReference]]:
+        """Extract function call references from an AST node (Issue #122).
+
+        FunctionCallDetector produces references (function calls), not definitions.
+        Definitions for functions come from the files that define them.
+
+        Args:
+            node: AST node to analyze.
+            filepath: Absolute path to the file being analyzed.
+            module_ast: The root AST node of the entire module (for context).
+
+        Returns:
+            Tuple of ([], references) - function calls produce references, not definitions.
+        """
+        references: List[SymbolReference] = []
+
+        if isinstance(node, ast.Call):
+            # Build caches if analyzing a new file
+            if self._cached_filepath != filepath:
+                self._cached_filepath = filepath
+                self._local_functions.clear()
+                self._import_map.clear()
+                self._build_local_function_cache(module_ast)
+
+            func_node = node.func
+            caller_context = self._get_call_context(node, module_ast)
+
+            # Pattern 1: Simple direct call - function_name(args)
+            if isinstance(func_node, ast.Name):
+                function_name = func_node.id
+                resolved_module = self._resolve_function(function_name, filepath, module_ast)
+
+                ref = SymbolReference(
+                    name=function_name,
+                    reference_type=ReferenceType.FUNCTION_CALL,
+                    line_number=node.lineno,
+                    resolved_module=resolved_module,
+                    resolved_symbol=function_name,
+                    is_method_call=False,
+                    caller_context=caller_context,
+                    metadata={
+                        "call_pattern": "simple",
+                    },
+                )
+                references.append(ref)
+
+            # Pattern 2: Module-qualified call - module.function(args)
+            elif isinstance(func_node, ast.Attribute):
+                if isinstance(func_node.value, ast.Name):
+                    module_name = func_node.value.id
+                    function_name = func_node.attr
+
+                    # Build import map if not already built
+                    if not self._import_map:
+                        self._build_import_map(module_ast, filepath)
+
+                    # Only treat as module-qualified call if module_name is actually imported
+                    if module_name in self._import_map:
+                        resolved_module = self._resolve_module_qualified_call(
+                            module_name, function_name, filepath, module_ast
+                        )
+
+                        ref = SymbolReference(
+                            name=f"{module_name}.{function_name}",
+                            reference_type=ReferenceType.FUNCTION_CALL,
+                            line_number=node.lineno,
+                            resolved_module=resolved_module,
+                            resolved_symbol=function_name,
+                            module_name=module_name,
+                            is_method_call=False,
+                            caller_context=caller_context,
+                            metadata={
+                                "call_pattern": "module_qualified",
+                            },
+                        )
+                        references.append(ref)
+
+        return ([], references)
