@@ -1110,7 +1110,8 @@ class CrossFileContextService:
         # Per TDD Section 3.8.3 and FR-13: Line numbers should indicate where
         # symbols are DEFINED in the dependency file, not where they're USED
         # in the target file. This enables efficient snippet-based caching.
-        context_parts.append("This file imports from:")
+        # Issue #136: Clarify that line numbers refer to dependency files
+        context_parts.append("This file imports from (line numbers are in dependency files):")
         # Sort references by file path for deterministic output (Issue #131)
         for target_file_path in sorted(files_imported.keys()):
             rels = files_imported[target_file_path]
@@ -1125,11 +1126,12 @@ class CrossFileContextService:
                         symbols.append(f"{rel.target_symbol}()")
                 else:
                     symbols.append(f"(line {rel.line_number})")
-            # Sort symbols for deterministic output (Issue #131)
-            symbols.sort()
+            # Sort and deduplicate symbols for deterministic output (Issue #131, #136)
+            unique_symbols = sorted(set(symbols))
             # Print all symbols without truncation (Issue #131)
-            symbols_str = ", ".join(symbols)
-            context_parts.append(f"- {Path(target_file_path).name}: {symbols_str}")
+            symbols_str = ", ".join(unique_symbols)
+            # Issue #136: Use full file path instead of just filename
+            context_parts.append(f"- {target_file_path}: {symbols_str}")
 
         context_parts.append("")
 
@@ -1172,8 +1174,9 @@ class CrossFileContextService:
             # Skip deleted files in snippet generation (EC-14)
             if rel.target_file in deleted_files:
                 # Add a note about the deleted file
+                # Issue #136: Use full file path
                 snippet_text = f"# ⚠️ File was deleted\n# Last known location: {rel.target_file}"
-                context_parts.append(f"From {Path(rel.target_file).name}:{rel.line_number}")
+                context_parts.append(f"From {rel.target_file}:{rel.line_number}")
                 context_parts.append("    # ⚠️ File was deleted")
                 context_parts.append(f"    # Last known location: {rel.target_file}")
                 context_parts.append("")
@@ -1185,7 +1188,7 @@ class CrossFileContextService:
                     rel=rel,
                     target_file=target_file,
                     snippet=snippet_text,
-                    snippet_location=f"{Path(rel.target_file).name}:{rel.line_number}",
+                    snippet_location=f"{rel.target_file}:{rel.line_number}",
                     token_count=snippet_token_count,
                     context_token_total=context_token_total,
                 )
@@ -1194,19 +1197,19 @@ class CrossFileContextService:
                 continue
 
             # Check for wildcard imports (EC-4)
+            # Issue #136: Use full file path instead of just filename
             if rel.relationship_type == RelationshipType.WILDCARD_IMPORT:
-                target_name = Path(rel.target_file).name
                 snippet_text = (
                     f"from {Path(rel.target_file).stem} import *\n"
                     f"# Note: Wildcard import - specific function tracking unavailable\n"
-                    f"# See {target_name} for available functions"
+                    f"# See {rel.target_file} for available functions"
                 )
-                context_parts.append(f"From {target_name}:{rel.line_number}")
+                context_parts.append(f"From {rel.target_file}:{rel.line_number}")
                 context_parts.append(f"from {Path(rel.target_file).stem} import *")
                 context_parts.append(
                     "    # Note: Wildcard import - specific function tracking unavailable"
                 )
-                context_parts.append(f"    # See {target_name} for available functions")
+                context_parts.append(f"    # See {rel.target_file} for available functions")
                 context_parts.append("")
 
                 # Log the injection event (FR-26)
@@ -1216,7 +1219,7 @@ class CrossFileContextService:
                     rel=rel,
                     target_file=target_file,
                     snippet=snippet_text,
-                    snippet_location=f"{target_name}:{rel.line_number}",
+                    snippet_location=f"{rel.target_file}:{rel.line_number}",
                     token_count=snippet_token_count,
                     context_token_total=context_token_total,
                 )
@@ -1235,8 +1238,8 @@ class CrossFileContextService:
             )
 
             if signature:
-                target_name = Path(rel.target_file).name
-                context_parts.append(f"From {target_name}:{rel.target_line or '?'}")
+                # Issue #136: Use full file path instead of just filename
+                context_parts.append(f"From {rel.target_file}:{rel.target_line or '?'}")
                 context_parts.append(signature)
 
                 # Build snippet text for logging
@@ -1251,11 +1254,11 @@ class CrossFileContextService:
                 # Calculate snippet location for logging
                 if impl_range:
                     start_line, end_line = impl_range
-                    snippet_location = f"{target_name}:{start_line}-{end_line}"
+                    snippet_location = f"{rel.target_file}:{start_line}-{end_line}"
                 else:
                     start_line = rel.target_line or 0
                     end_line = start_line
-                    snippet_location = f"{target_name}:{rel.target_line or '?'}"
+                    snippet_location = f"{rel.target_file}:{rel.target_line or '?'}"
 
                 # Check for large function (EC-12)
                 if impl_range:
@@ -1267,17 +1270,17 @@ class CrossFileContextService:
                             f"    # Function is {line_count}+ lines, showing signature only"
                         )
                         context_parts.append(
-                            f"    # Full definition: {target_name}:{start_line}-{end_line}"
+                            f"    # Full definition: {rel.target_file}:{start_line}-{end_line}"
                         )
                     else:
                         # Normal function - show implementation range
                         context_parts.append(
-                            f"    # Implementation in {target_name}:{start_line}-{end_line}"
+                            f"    # Implementation in {rel.target_file}:{start_line}-{end_line}"
                         )
                 else:
                     # Fallback if no range available
                     context_parts.append(
-                        f"    # Implementation in {target_name}:{rel.target_line or '?'}"
+                        f"    # Implementation in {rel.target_file}:{rel.target_line or '?'}"
                     )
 
                 context_parts.append("")

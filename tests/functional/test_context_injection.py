@@ -401,7 +401,10 @@ class TestContextInjection:
 
         # Verify context is present and contains expected elements
         assert "[Cross-File Context]" in context, "Context header should be present"
-        assert "This file imports from:" in context, "Import summary should be present"
+        # Issue #136: Updated header to clarify line numbers are in dependency files
+        assert (
+            "This file imports from (line numbers are in dependency files):" in context
+        ), "Import summary should be present"
         # order_service.py imports from order.py, product.py, user.py, etc.
         assert "order.py" in context, "Should show dependency on order.py"
 
