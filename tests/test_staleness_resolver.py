@@ -1157,7 +1157,8 @@ class TestStalenessResolverDependentRelationshipPreservation:
         """Test graceful degradation when RelationshipBuilder is not provided.
 
         When no RelationshipBuilder is available, relationships cannot be rebuilt
-        from symbol data. The resolver should still work but relationships may be lost.
+        from symbol data. The resolver should complete but return False to indicate
+        that some relationships could not be rebuilt.
         """
         graph = RelationshipGraph()
 
@@ -1192,18 +1193,20 @@ class TestStalenessResolverDependentRelationshipPreservation:
         resolver = StalenessResolver(graph, needs_analysis, analyze_file)
         result = resolver.resolve_staleness("A")
 
-        # Should complete without error
-        assert result is True
+        # Should complete without crashing, but return False since relationships
+        # could not be rebuilt (no RelationshipBuilder available)
+        assert result is False
         assert "B" in analyzed_files
 
         # Note: Without RelationshipBuilder, A -> B relationship is lost
-        # This is expected - the fix requires RelationshipBuilder to work
+        # The resolver correctly reports this as a failure
 
     def test_no_rebuild_for_file_without_symbol_data(self):
         """Test that files without symbol data are handled gracefully.
 
         If a pending file doesn't have symbol data in the RelationshipBuilder,
-        the resolver should skip relationship rebuilding for that file.
+        the resolver should skip relationship rebuilding for that file but return
+        False to indicate that some relationships could not be rebuilt.
         """
         from xfile_context.relationship_builder import RelationshipBuilder
 
@@ -1244,9 +1247,10 @@ class TestStalenessResolverDependentRelationshipPreservation:
         )
         result = resolver.resolve_staleness("A")
 
-        # Should complete without error
-        assert result is True
+        # Should complete without crashing, but return False since A has no
+        # symbol data and its relationships could not be rebuilt
+        assert result is False
         assert "B" in analyzed_files
 
         # A -> B relationship is lost since A has no symbol data to rebuild from
-        # This is expected - the caller should ensure symbol data is available
+        # The resolver correctly reports this as a failure

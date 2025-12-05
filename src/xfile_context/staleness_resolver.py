@@ -419,7 +419,9 @@ class StalenessResolver:
             else:
                 # Rebuild relationships for pending file from symbol data (Issue #133 fix)
                 logger.debug(f"Rebuilding relationships for pending file: {Path(filepath).name}")
-                self._rebuild_relationships_for_file(filepath)
+                if not self._rebuild_relationships_for_file(filepath):
+                    logger.warning(f"Failed to rebuild relationships for pending file: {filepath}")
+                    success = False
 
             # Clear pending flag
             self.graph.clear_pending_relationships(filepath)
