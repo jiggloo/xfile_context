@@ -16,7 +16,7 @@ line numbers for function symbols, fixing missing line numbers in injected conte
 v0.1.0 Scope:
 - Regular functions: def foo(): pass
 - Async functions: async def bar(): pass
-- Methods inside classes (as nested definitions)
+- Methods inside classes (detected with parent_class field)
 - Extracts: name, line range, signature, decorators, docstring
 
 Note: Decorated functions/classes are ALSO handled by DecoratorDetector.
@@ -28,7 +28,7 @@ See Issue #140 for implementation rationale.
 
 import ast
 import logging
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from xfile_context.detectors.base import RelationshipDetector
 from xfile_context.models import Relationship, SymbolDefinition, SymbolReference, SymbolType
@@ -61,8 +61,8 @@ class FunctionDefinitionDetector(RelationshipDetector):
 
         Note: Detector instances are reused across multiple files (per DetectorRegistry design).
         """
-        # Track parent class context for method definitions
-        self._current_class: Optional[str] = None
+        # Cache mapping function node IDs to parent class names (for performance)
+        self._parent_class_map: Dict[int, str] = {}
         # Track which file the cache belongs to (for cache invalidation)
         self._cached_filepath: Optional[str] = None
 
@@ -136,13 +136,15 @@ class FunctionDefinitionDetector(RelationshipDetector):
         """
         definitions: List[SymbolDefinition] = []
 
-        # Invalidate cache on file change
+        # Invalidate cache on file change and rebuild parent class map
         if self._cached_filepath != filepath:
             self._cached_filepath = filepath
+            self._parent_class_map.clear()
+            self._build_parent_class_map(module_ast)
 
         # Handle function definitions (regular and async)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            definition = self._extract_function_definition(node, module_ast)
+            definition = self._extract_function_definition(node)
             if definition:
                 definitions.append(definition)
 
@@ -151,13 +153,11 @@ class FunctionDefinitionDetector(RelationshipDetector):
     def _extract_function_definition(
         self,
         node: ast.FunctionDef | ast.AsyncFunctionDef,
-        module_ast: ast.Module,
     ) -> Optional[SymbolDefinition]:
         """Extract a SymbolDefinition from a function/method node.
 
         Args:
             node: FunctionDef or AsyncFunctionDef AST node.
-            module_ast: The root AST node of the module.
 
         Returns:
             SymbolDefinition for the function, or None if extraction fails.
@@ -174,8 +174,8 @@ class FunctionDefinitionDetector(RelationshipDetector):
         # Extract docstring (first line only)
         docstring = self._extract_docstring(node)
 
-        # Determine parent class (if this is a method)
-        parent_class = self._find_parent_class(node, module_ast)
+        # Determine parent class (if this is a method) using pre-built cache
+        parent_class = self._find_parent_class(node)
 
         return SymbolDefinition(
             name=node.name,
@@ -243,26 +243,33 @@ class FunctionDefinitionDetector(RelationshipDetector):
 
         return decorators if decorators else None
 
-    def _get_decorator_name(self, decorator: ast.expr) -> Optional[str]:
-        """Get the name of a decorator.
+    def _get_decorator_name(self, decorator: ast.expr, depth: int = 0) -> Optional[str]:
+        """Get the name of a decorator with recursion protection.
 
         Args:
             decorator: Decorator AST node.
+            depth: Current recursion depth (for safety).
 
         Returns:
             Decorator name as string, or None if cannot determine.
         """
+        # Protection against stack overflow from malicious deep nesting
+        max_decorator_depth = 100
+        if depth > max_decorator_depth:
+            logger.warning(f"Decorator nesting exceeds maximum depth ({max_decorator_depth})")
+            return None
+
         # Simple decorator: @name
         if isinstance(decorator, ast.Name):
             return decorator.id
 
         # Decorator with arguments: @name(args)
         if isinstance(decorator, ast.Call):
-            return self._get_decorator_name(decorator.func)
+            return self._get_decorator_name(decorator.func, depth + 1)
 
         # Attribute decorator: @module.name
         if isinstance(decorator, ast.Attribute):
-            base_name = self._get_decorator_name(decorator.value)
+            base_name = self._get_decorator_name(decorator.value, depth + 1)
             if base_name:
                 return f"{base_name}.{decorator.attr}"
             return decorator.attr
@@ -289,28 +296,34 @@ class FunctionDefinitionDetector(RelationshipDetector):
 
         return None
 
+    def _build_parent_class_map(self, module_ast: ast.Module) -> None:
+        """Build cache mapping function node IDs to parent class names.
+
+        This pre-computes parent classes in O(m) time instead of O(n*m),
+        preventing performance degradation on large files.
+
+        Args:
+            module_ast: The root AST node of the module.
+        """
+        for node in ast.walk(module_ast):
+            if isinstance(node, ast.ClassDef):
+                # Map each direct method to its parent class
+                for child in node.body:
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        self._parent_class_map[id(child)] = node.name
+
     def _find_parent_class(
         self,
         func_node: ast.FunctionDef | ast.AsyncFunctionDef,
-        module_ast: ast.Module,
     ) -> Optional[str]:
         """Find the parent class if this function is a method.
 
+        Uses pre-built cache for O(1) lookup instead of O(m) tree traversal.
+
         Args:
             func_node: The function node to check.
-            module_ast: The root AST node of the module.
 
         Returns:
             Parent class name if this is a method, None otherwise.
         """
-        # Walk through the module to find if func_node is inside a class
-        for node in ast.walk(module_ast):
-            if isinstance(node, ast.ClassDef):
-                # Check if func_node is directly in this class's body
-                for child in node.body:
-                    if child is func_node:
-                        return node.name
-                    # Also check for nested functions inside class methods
-                    # (though we only report direct methods)
-
-        return None
+        return self._parent_class_map.get(id(func_node))

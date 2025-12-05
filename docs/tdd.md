@@ -6728,7 +6728,7 @@ These gaps were identified during TDD creation itself, before implementation beg
 - **Status**: Resolved
 - **Resolution Date**: 2025-12-02
 
-**G-4: Missing FunctionDefinitionDetector (Issue #140)**
+**G-5: Missing FunctionDefinitionDetector (Issue #140)**
 - **Discovery Date**: 2025-12-05
 - **Discovered During**: Issue #138 investigation revealed functions don't have line numbers on first read_with_context() call
 - **Description**: FunctionCallDetector produces FUNCTION_CALL references but no detector extracts SymbolDefinition entries for regular (non-decorated) functions. This means _get_target_line() in RelationshipBuilder cannot resolve line numbers for function symbols.

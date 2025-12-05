@@ -152,6 +152,40 @@ def test_something(x):
         assert defn.name == "test_something"
         assert defn.decorators == ["pytest.mark.parametrize"]
 
+    def test_multiline_function_signature(self, tmp_path):
+        """Test detection of function with multi-line signature."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text(
+            """
+def complex_function(
+    arg1: str,
+    arg2: int,
+    *args,
+    kwonly: bool = True,
+    **kwargs
+):
+    pass
+"""
+        )
+
+        detector = FunctionDefinitionDetector()
+        tree = ast.parse(test_file.read_text())
+
+        definitions = []
+        for node in ast.walk(tree):
+            defs, refs = detector.extract_symbols(node, str(test_file), tree)
+            definitions.extend(defs)
+
+        assert len(definitions) == 1
+        defn = definitions[0]
+        assert defn.name == "complex_function"
+        # Signature should contain all arguments
+        assert "arg1" in defn.signature
+        assert "arg2" in defn.signature
+        assert "*args" in defn.signature
+        assert "kwonly" in defn.signature
+        assert "**kwargs" in defn.signature
+
     def test_function_with_docstring(self, tmp_path):
         """Test extraction of function docstring."""
         test_file = tmp_path / "test.py"
