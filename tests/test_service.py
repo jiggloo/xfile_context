@@ -1056,7 +1056,12 @@ class TestContextInjectionFormatting:
 
             result = service.read_file_with_context(str(Path(tmpdir) / "main.py"))
 
-            assert "This file imports from:" in result.injected_context
+            # Issue #136: Updated header to clarify line numbers are in dependency files
+            assert (
+                "This file imports from (line numbers are in dependency files):"
+                in result.injected_context
+            )
+            # Issue #136: Now uses full file path instead of just filename
             assert "utils.py:" in result.injected_context
             service.shutdown()
 
@@ -1098,12 +1103,11 @@ class TestContextInjectionFormatting:
             result = service.read_file_with_context(str(Path(tmpdir) / "main.py"))
 
             # Should show line range like "5-8" instead of just "5"
-            assert "# Implementation in utils.py:" in result.injected_context
+            # Issue #136: Now uses full file path instead of just filename
+            assert "# Implementation in " in result.injected_context
+            assert "utils.py:" in result.injected_context
             # The format should include a range with hyphen
-            assert (
-                "-"
-                in result.injected_context.split("# Implementation in utils.py:")[1].split("\n")[0]
-            )
+            assert "-" in result.injected_context.split("# Implementation in ")[1].split("\n")[0]
             service.shutdown()
 
     def test_format_short_docstring_included(self):
@@ -1602,7 +1606,11 @@ class TestLazyInitialization:
 
             # Verify context was injected (indicates analysis happened)
             assert "[Cross-File Context]" in result.injected_context
-            assert "This file imports from:" in result.injected_context
+            # Issue #136: Updated header to clarify line numbers are in dependency files
+            assert (
+                "This file imports from (line numbers are in dependency files):"
+                in result.injected_context
+            )
             assert "utils.py" in result.injected_context
 
             # Verify the graph now has relationships
