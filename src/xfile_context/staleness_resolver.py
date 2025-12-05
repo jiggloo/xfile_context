@@ -429,7 +429,7 @@ class StalenessResolver:
 
         return success
 
-    def _rebuild_relationships_for_file(self, filepath: str) -> None:
+    def _rebuild_relationships_for_file(self, filepath: str) -> bool:
         """Rebuild relationships for a file from its symbol data (Issue #133 fix).
 
         This method rebuilds a file's outgoing relationships by:
@@ -442,6 +442,9 @@ class StalenessResolver:
 
         Args:
             filepath: Path to file needing relationship rebuild.
+
+        Returns:
+            True if relationships were rebuilt successfully, False otherwise.
         """
         if self._relationship_builder is None:
             # Fallback: No relationship builder available, can't rebuild
@@ -451,24 +454,34 @@ class StalenessResolver:
                 f"Cannot rebuild relationships for {Path(filepath).name}: "
                 "RelationshipBuilder not available"
             )
-            return
+            return False
 
         # Check if we have symbol data for this file
         file_data = self._relationship_builder.get_file_data(filepath)
         if file_data is None:
-            logger.debug(
-                f"No symbol data for {Path(filepath).name}, " "skipping relationship rebuild"
+            logger.warning(
+                f"No symbol data for {Path(filepath).name}, "
+                "skipping relationship rebuild - relationships may be incomplete"
             )
-            return
+            return False
 
-        # Rebuild relationships from symbol data
-        relationships = self._relationship_builder.build_relationships_for_file(filepath)
+        try:
+            # Build relationships from symbol data first (before modifying graph)
+            # This ensures we have all new relationships before removing old ones
+            relationships = self._relationship_builder.build_relationships_for_file(filepath)
 
-        # Remove any existing relationships for this file and add the rebuilt ones
-        # Note: We only remove outgoing relationships to preserve incoming ones
-        # that may have been added by other files' analysis
-        self.graph.remove_outgoing_relationships(filepath)
-        for rel in relationships:
-            self.graph.add_relationship(rel)
+            # Remove any existing relationships for this file and add the rebuilt ones
+            # Note: We only remove outgoing relationships to preserve incoming ones
+            # that may have been added by other files' analysis
+            self.graph.remove_outgoing_relationships(filepath)
+            for rel in relationships:
+                self.graph.add_relationship(rel)
 
-        logger.debug(f"Rebuilt {len(relationships)} relationships for {Path(filepath).name}")
+            logger.debug(f"Rebuilt {len(relationships)} relationships for {Path(filepath).name}")
+            return True
+
+        except Exception as e:
+            # Log error but don't fail the entire staleness resolution
+            # The file's relationships may be incomplete, but other files can continue
+            logger.error(f"Failed to rebuild relationships for {Path(filepath).name}: {e}")
+            return False
