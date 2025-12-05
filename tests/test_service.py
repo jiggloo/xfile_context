@@ -1056,7 +1056,12 @@ class TestContextInjectionFormatting:
 
             result = service.read_file_with_context(str(Path(tmpdir) / "main.py"))
 
-            assert "This file imports from:" in result.injected_context
+            # Issue #136: Updated header to clarify line numbers are in dependency files
+            assert (
+                "This file imports from (line numbers are in dependency files):"
+                in result.injected_context
+            )
+            # Issue #136: Now uses full file path instead of just filename
             assert "utils.py:" in result.injected_context
             service.shutdown()
 
@@ -1098,12 +1103,11 @@ class TestContextInjectionFormatting:
             result = service.read_file_with_context(str(Path(tmpdir) / "main.py"))
 
             # Should show line range like "5-8" instead of just "5"
-            assert "# Implementation in utils.py:" in result.injected_context
+            # Issue #136: Now uses full file path instead of just filename
+            assert "# Implementation in " in result.injected_context
+            assert "utils.py:" in result.injected_context
             # The format should include a range with hyphen
-            assert (
-                "-"
-                in result.injected_context.split("# Implementation in utils.py:")[1].split("\n")[0]
-            )
+            assert "-" in result.injected_context.split("# Implementation in ")[1].split("\n")[0]
             service.shutdown()
 
     def test_format_short_docstring_included(self):
@@ -1602,7 +1606,11 @@ class TestLazyInitialization:
 
             # Verify context was injected (indicates analysis happened)
             assert "[Cross-File Context]" in result.injected_context
-            assert "This file imports from:" in result.injected_context
+            # Issue #136: Updated header to clarify line numbers are in dependency files
+            assert (
+                "This file imports from (line numbers are in dependency files):"
+                in result.injected_context
+            )
             assert "utils.py" in result.injected_context
 
             # Verify the graph now has relationships
@@ -2311,5 +2319,176 @@ class TestDeterministicOutput:
             # All calls should produce identical output
             assert context1 == context2, "First and second call produced different output"
             assert context2 == context3, "Second and third call produced different output"
+
+            service.shutdown()
+
+
+class TestFirstCallCompleteSymbols:
+    """Tests that the first read_with_context() call has complete symbol information (Issue #138).
+
+    When read_with_context() is called for the first time on a file, the dependency
+    files' symbols should be fully loaded so that:
+    - Line numbers appear in the "This file imports from:" section
+    - The "Recent definitions:" section contains the expected class/function definitions
+
+    This was broken because analyze_file_two_phase() only loaded the target file's symbols,
+    not the dependency files' symbols, so _get_target_line() returned None for dependencies.
+    """
+
+    def test_first_call_has_line_numbers_for_class_imports(self):
+        """Test that the first call includes line numbers for imported classes.
+
+        Note: Currently only class definitions are extracted by detectors.
+        Function definitions are not extracted, so they don't have line numbers.
+        This test verifies the Issue #138 fix works for classes.
+        """
+        with TemporaryDirectory() as tmpdir:
+            config = Config()  # enable_context_injection=True by default
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # Create utils.py with a class
+            Path(utils_path).write_text(
+                '''"""Utils module."""
+
+
+class HelperClass:
+    """A helper class."""
+    pass
+'''
+            )
+
+            # Create main.py that imports from utils
+            Path(main_path).write_text(
+                '''"""Main module."""
+from utils import HelperClass
+
+
+class ChildClass(HelperClass):
+    """A child class."""
+    pass
+'''
+            )
+
+            # Create a fresh service (no prior analysis)
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # First call should have complete information
+            result = service.read_file_with_context(main_path)
+
+            # The imports section should include line numbers for the class
+            assert "HelperClass" in result.injected_context
+            # Line 4 is where HelperClass is defined in utils.py
+            assert (
+                "line 4" in result.injected_context
+            ), f"Line number not found in first call. Context:\n{result.injected_context}"
+
+            service.shutdown()
+
+    def test_first_call_has_recent_definitions_section(self):
+        """Test that the first call includes the Recent definitions section."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()  # enable_context_injection=True by default
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            base_path = str(Path(tmpdir) / "base.py")
+
+            # Create base.py with a class
+            Path(base_path).write_text(
+                '''"""Base module."""
+
+
+class BaseClass:
+    """A base class for inheritance."""
+
+    def method(self):
+        """A method."""
+        pass
+'''
+            )
+
+            # Create main.py that imports and uses the class
+            Path(main_path).write_text(
+                '''"""Main module."""
+from base import BaseClass
+
+
+class ChildClass(BaseClass):
+    """A child class."""
+    pass
+'''
+            )
+
+            # Create a fresh service (no prior analysis)
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # First call should have complete information
+            result = service.read_file_with_context(main_path)
+
+            # The Recent definitions section should exist and have content
+            assert "Recent definitions:" in result.injected_context
+
+            # Should include the BaseClass definition with implementation range
+            assert "BaseClass" in result.injected_context
+            # Line 4 is where BaseClass is defined in base.py (after docstring and blank lines)
+            assert (
+                "base.py:4" in result.injected_context or "From" in result.injected_context
+            ), f"BaseClass definition not found. Context:\n{result.injected_context}"
+
+            service.shutdown()
+
+    def test_first_and_second_call_produce_identical_output(self):
+        """Test that the first and second calls produce identical output (idempotency)."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()  # enable_context_injection=True by default
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # Create utils.py
+            Path(utils_path).write_text(
+                '''"""Utils module."""
+
+
+def helper_one():
+    """Helper one."""
+    pass
+
+
+def helper_two():
+    """Helper two."""
+    pass
+'''
+            )
+
+            # Create main.py
+            Path(main_path).write_text(
+                '''"""Main module."""
+from utils import helper_one, helper_two
+
+helper_one()
+helper_two()
+'''
+            )
+
+            # Create a fresh service
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # First call
+            result1 = service.read_file_with_context(main_path)
+
+            # Second call (no changes made)
+            result2 = service.read_file_with_context(main_path)
+
+            # Injected context should be identical
+            assert result1.injected_context == result2.injected_context, (
+                f"First and second call produced different output.\n"
+                f"First:\n{result1.injected_context}\n"
+                f"Second:\n{result2.injected_context}"
+            )
 
             service.shutdown()

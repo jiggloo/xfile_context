@@ -556,6 +556,12 @@ class PythonAnalyzer:
         relationship_builder.remove_file_data(filepath)  # Remove old data if exists
         relationship_builder.add_file_data(symbol_data)
 
+        # Issue #138 Fix: Ensure dependency files have their symbols loaded
+        # Before building relationships, we need the dependency files' symbol data
+        # in the builder so that _get_target_line() can resolve line numbers.
+        # This ensures the first call to read_with_context() has complete information.
+        self._ensure_dependency_symbols_loaded(symbol_data, relationship_builder)
+
         # Build relationships for this file
         relationships = relationship_builder.build_relationships_for_file(filepath)
 
@@ -638,3 +644,57 @@ class PythonAnalyzer:
             success_count += 1
 
         return (success_count, failed_count, relationship_builder)
+
+    def _ensure_dependency_symbols_loaded(
+        self,
+        symbol_data: FileSymbolData,
+        relationship_builder: RelationshipBuilder,
+    ) -> None:
+        """Ensure dependency files have their symbols loaded in the builder (Issue #138).
+
+        When building relationships for a file, we need the dependency files' symbol
+        data in the RelationshipBuilder so that _get_target_line() can resolve line
+        numbers for target symbols. Without this, the first call to read_with_context()
+        would have incomplete information (missing line numbers and "Recent definitions").
+
+        This method:
+        1. Identifies direct dependency files from the source file's references
+        2. For each dependency file not already in the builder, extracts its symbols
+        3. Adds the extracted symbols to the builder
+
+        Note: This only loads direct dependencies, not transitive ones. This is
+        sufficient because we only need to resolve line numbers for symbols that
+        the source file directly references.
+
+        Args:
+            symbol_data: FileSymbolData of the source file being analyzed.
+            relationship_builder: RelationshipBuilder to add dependency symbols to.
+        """
+        # Collect unique dependency files from references
+        dependency_files: Set[str] = set()
+
+        for ref in symbol_data.references:
+            target_file = ref.resolved_module
+            if target_file is None:
+                continue
+
+            # Skip special markers (stdlib, third-party, builtins, unresolved)
+            if target_file.startswith("<") and target_file.endswith(">"):
+                continue
+
+            # Skip if already in the builder
+            if relationship_builder.get_file_data(target_file) is not None:
+                continue
+
+            # Skip if file doesn't exist
+            if not Path(target_file).exists():
+                continue
+
+            dependency_files.add(target_file)
+
+        # Extract and add symbols for each dependency file
+        for dep_file in dependency_files:
+            dep_symbols = self.extract_file_symbols(dep_file)
+            if dep_symbols is not None and dep_symbols.is_valid:
+                relationship_builder.add_file_data(dep_symbols)
+                logger.debug(f"Issue #138: Loaded dependency symbols from {Path(dep_file).name}")

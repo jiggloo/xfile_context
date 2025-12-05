@@ -589,6 +589,68 @@ def test_something():
         assert len(warnings) >= 1
         assert warnings[0].is_test_module is True
 
+    def test_extract_decorator_references(self, tmp_path):
+        """Test extraction of decorator references (Issue #141)."""
+        test_file = tmp_path / "source.py"
+        test_file.write_text(
+            """
+@custom_decorator
+def my_function():
+    pass
+
+@module.decorator
+def another_function():
+    pass
+"""
+        )
+
+        detector = DecoratorDetector()
+        tree = ast.parse(test_file.read_text())
+
+        all_references = []
+        for node in ast.walk(tree):
+            _, references = detector.extract_symbols(node, str(test_file), tree)
+            all_references.extend(references)
+
+        # Should extract references for both decorators
+        assert len(all_references) == 2
+
+        # Check first decorator reference
+        ref1 = all_references[0]
+        assert ref1.name == "custom_decorator"
+        assert ref1.reference_type == "decorator"
+        assert ref1.resolved_symbol == "custom_decorator"
+
+        # Check second decorator reference
+        ref2 = all_references[1]
+        assert ref2.name == "module.decorator"
+        assert ref2.reference_type == "decorator"
+        assert ref2.resolved_symbol == "module.decorator"
+
+    def test_extract_decorator_on_class(self, tmp_path):
+        """Test extraction of decorator references on classes (Issue #141)."""
+        test_file = tmp_path / "source.py"
+        test_file.write_text(
+            """
+@dataclass
+class MyClass:
+    name: str
+"""
+        )
+
+        detector = DecoratorDetector()
+        tree = ast.parse(test_file.read_text())
+
+        all_references = []
+        for node in ast.walk(tree):
+            _, references = detector.extract_symbols(node, str(test_file), tree)
+            all_references.extend(references)
+
+        # Should extract decorator reference
+        assert len(all_references) == 1
+        assert all_references[0].name == "dataclass"
+        assert all_references[0].reference_type == "decorator"
+
     def test_detector_priority_and_name(self):
         """Test detector metadata."""
         detector = DecoratorDetector()
@@ -734,6 +796,54 @@ class MyClass(Base1, Base2, metaclass=CustomMeta):
 
         warnings = detector.get_warnings()
         assert len(warnings) == 1
+
+    def test_extract_metaclass_references(self, tmp_path):
+        """Test extraction of metaclass references (Issue #141)."""
+        test_file = tmp_path / "source.py"
+        test_file.write_text(
+            """
+class MyClass(metaclass=CustomMeta):
+    pass
+"""
+        )
+
+        detector = MetaclassDetector()
+        tree = ast.parse(test_file.read_text())
+
+        all_references = []
+        for node in ast.walk(tree):
+            _, references = detector.extract_symbols(node, str(test_file), tree)
+            all_references.extend(references)
+
+        # Should extract metaclass reference
+        assert len(all_references) == 1
+        assert all_references[0].name == "CustomMeta"
+        assert all_references[0].reference_type == "metaclass"
+        assert all_references[0].resolved_symbol == "CustomMeta"
+
+    def test_extract_module_qualified_metaclass_reference(self, tmp_path):
+        """Test extraction of module-qualified metaclass references (Issue #141)."""
+        test_file = tmp_path / "source.py"
+        test_file.write_text(
+            """
+class MyClass(metaclass=mymodule.CustomMeta):
+    pass
+"""
+        )
+
+        detector = MetaclassDetector()
+        tree = ast.parse(test_file.read_text())
+
+        all_references = []
+        for node in ast.walk(tree):
+            _, references = detector.extract_symbols(node, str(test_file), tree)
+            all_references.extend(references)
+
+        # Should extract metaclass reference with module qualification
+        assert len(all_references) == 1
+        assert all_references[0].name == "mymodule.CustomMeta"
+        assert all_references[0].reference_type == "metaclass"
+        assert all_references[0].resolved_symbol == "mymodule.CustomMeta"
 
     def test_detector_priority_and_name(self):
         """Test detector metadata."""
