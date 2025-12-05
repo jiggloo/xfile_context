@@ -33,7 +33,7 @@ from xfile_context.detectors.dynamic_pattern_detector import (
     DynamicPatternWarning,
     WarningSeverity,
 )
-from xfile_context.models import SymbolDefinition, SymbolReference, SymbolType
+from xfile_context.models import ReferenceType, SymbolDefinition, SymbolReference, SymbolType
 from xfile_context.pytest_config_parser import is_test_module
 
 logger = logging.getLogger(__name__)
@@ -203,9 +203,12 @@ class MetaclassDetector(DynamicPatternDetector):
         filepath: str,
         module_ast: ast.Module,
     ) -> Tuple[List[SymbolDefinition], List[SymbolReference]]:
-        """Extract class definitions with metaclasses (Issue #122).
+        """Extract class definitions with metaclasses and metaclass references (Issue #141).
 
-        MetaclassDetector can produce definitions for classes with metaclasses.
+        MetaclassDetector produces:
+        - Definitions for classes with metaclasses
+        - References to the metaclasses themselves
+
         The definition includes metaclass information in the metadata.
 
         Args:
@@ -214,9 +217,10 @@ class MetaclassDetector(DynamicPatternDetector):
             module_ast: The root AST node of the entire module (for context).
 
         Returns:
-            Tuple of (definitions, []) - metaclass classes produce definitions.
+            Tuple of (definitions, references) - metaclass classes and their metaclass refs.
         """
         definitions: List[SymbolDefinition] = []
+        references: List[SymbolReference] = []
 
         # Only process ClassDef nodes
         if not isinstance(node, ast.ClassDef):
@@ -224,9 +228,11 @@ class MetaclassDetector(DynamicPatternDetector):
 
         # Check for metaclass keyword
         metaclass_name = None
+        metaclass_keyword = None
         for keyword in node.keywords:
             if keyword.arg == "metaclass":
                 metaclass_name = self._get_metaclass_name(keyword.value)
+                metaclass_keyword = keyword
                 break
 
         if not metaclass_name:
@@ -236,6 +242,18 @@ class MetaclassDetector(DynamicPatternDetector):
         if self._cached_filepath != filepath:
             self._cached_filepath = filepath
             self._cached_is_test = is_test_module(filepath, self._project_root)
+
+        # Create metaclass reference (Issue #141)
+        reference = SymbolReference(
+            name=metaclass_name,
+            reference_type=ReferenceType.METACLASS,
+            line_number=node.lineno,
+            resolved_symbol=metaclass_name,
+            # Note: resolved_module would require import resolution
+            # We set it to None here - it can be resolved in a later phase
+            resolved_module=None,
+        )
+        references.append(reference)
 
         # Build class definition
         line_end: int = node.end_lineno if node.end_lineno else node.lineno
@@ -310,14 +328,15 @@ class MetaclassDetector(DynamicPatternDetector):
         definitions.append(definition)
 
         # Also detect pattern and emit warnings for non-standard metaclasses
-        warning = self._check_metaclass(
-            [kw for kw in node.keywords if kw.arg == "metaclass"][0],
-            node,
-            filepath,
-            self._cached_is_test,
-        )
-        if warning:
-            self._warnings.append(warning)
-            self._emit_warning(warning)
+        if metaclass_keyword is not None:
+            warning = self._check_metaclass(
+                metaclass_keyword,
+                node,
+                filepath,
+                self._cached_is_test,
+            )
+            if warning:
+                self._warnings.append(warning)
+                self._emit_warning(warning)
 
-        return (definitions, [])
+        return (definitions, references)

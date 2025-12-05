@@ -34,7 +34,7 @@ from xfile_context.detectors.dynamic_pattern_detector import (
     DynamicPatternWarning,
     WarningSeverity,
 )
-from xfile_context.models import SymbolDefinition, SymbolReference, SymbolType
+from xfile_context.models import ReferenceType, SymbolDefinition, SymbolReference, SymbolType
 from xfile_context.pytest_config_parser import is_test_module
 
 logger = logging.getLogger(__name__)
@@ -270,11 +270,11 @@ class DecoratorDetector(DynamicPatternDetector):
         filepath: str,
         module_ast: ast.Module,
     ) -> Tuple[List[SymbolDefinition], List[SymbolReference]]:
-        """Extract decorated function/class definitions (Issue #122).
+        """Extract decorated function/class definitions and decorator references (Issue #141).
 
-        DecoratorDetector can produce definitions for decorated functions/classes.
-        It does not produce references since the decorator relationship is complex
-        and better handled by other detectors.
+        DecoratorDetector produces:
+        - Definitions for decorated functions/classes
+        - References to the decorators themselves
 
         The definitions include decorator information in the metadata.
 
@@ -284,9 +284,10 @@ class DecoratorDetector(DynamicPatternDetector):
             module_ast: The root AST node of the entire module (for context).
 
         Returns:
-            Tuple of (definitions, []) - decorated items produce definitions.
+            Tuple of (definitions, references) - decorated items and their decorator refs.
         """
         definitions: List[SymbolDefinition] = []
+        references: List[SymbolReference] = []
 
         # Only process function/class definitions with decorators
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -300,12 +301,24 @@ class DecoratorDetector(DynamicPatternDetector):
             self._cached_filepath = filepath
             self._cached_is_test = is_test_module(filepath, self._project_root)
 
-        # Extract decorator names
+        # Extract decorator names and create references
         decorator_names: List[str] = []
         for decorator in node.decorator_list:
             dec_name = self._get_decorator_name(decorator)
             if dec_name:
                 decorator_names.append(dec_name)
+
+                # Create decorator reference (Issue #141)
+                reference = SymbolReference(
+                    name=dec_name,
+                    reference_type=ReferenceType.DECORATOR,
+                    line_number=decorator.lineno,
+                    resolved_symbol=dec_name,
+                    # Note: resolved_module would require import resolution
+                    # We set it to None here - it can be resolved in a later phase
+                    resolved_module=None,
+                )
+                references.append(reference)
 
         # Determine symbol type and build definition
         line_end: int = node.end_lineno if node.end_lineno else node.lineno
@@ -394,4 +407,4 @@ class DecoratorDetector(DynamicPatternDetector):
                 self._warnings.append(warning)
                 self._emit_warning(warning)
 
-        return (definitions, [])
+        return (definitions, references)

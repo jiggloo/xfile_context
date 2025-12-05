@@ -66,6 +66,8 @@ class ReferenceType:
     FUNCTION_CALL = "function_call"  # foo() or module.foo()
     CLASS_REFERENCE = "class_reference"  # class Foo(Bar): where Bar is imported
     ATTRIBUTE_ACCESS = "attribute_access"  # module.attribute
+    DECORATOR = "decorator"  # @decorator applied to function/class
+    METACLASS = "metaclass"  # class Foo(metaclass=Meta)
 
 
 @dataclass
