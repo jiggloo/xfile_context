@@ -10,8 +10,7 @@ Phase 2: FileSymbolData -> Relationships (via RelationshipBuilder)
 These tests verify:
 - analyze_file_two_phase() produces correct relationships
 - analyze_project_two_phase() provides cross-file resolution
-- Service integration with two-phase mode
-- Configuration switch between direct and two-phase modes
+- Service integration with two-phase analysis (always enabled per Issue #133)
 """
 
 from pathlib import Path
@@ -260,26 +259,15 @@ class TestServiceTwoPhaseIntegration:
         return {"root": tmp_path, "src": src_dir, "utils": utils_file, "main": main_file}
 
     @pytest.fixture
-    def two_phase_config(self, tmp_path: Path) -> Config:
-        """Create config with two-phase analysis enabled."""
-        config_file = tmp_path / ".cross_file_context_links.yml"
-        config_file.write_text("use_two_phase_analysis: true\n")
-        return Config(config_path=config_file)
-
-    @pytest.fixture
-    def direct_config(self, tmp_path: Path) -> Config:
-        """Create config with direct analysis (explicitly disabled)."""
-        config_file = tmp_path / ".cross_file_context_links.yml"
-        config_file.write_text("use_two_phase_analysis: false\n")
-        return Config(config_path=config_file)
+    def config(self, tmp_path: Path) -> Config:
+        """Create default config (two-phase analysis always enabled)."""
+        return Config(config_path=tmp_path / "nonexistent.yml")
 
     def test_service_two_phase_analyze_file(
-        self, temp_project: Dict[str, Path], two_phase_config: Config
+        self, temp_project: Dict[str, Path], config: Config
     ) -> None:
-        """Test service analyze_file in two-phase mode."""
-        service = CrossFileContextService(
-            config=two_phase_config, project_root=str(temp_project["root"])
-        )
+        """Test service analyze_file (always uses two-phase analysis)."""
+        service = CrossFileContextService(config=config, project_root=str(temp_project["root"]))
 
         try:
             result = service.analyze_file(str(temp_project["main"]))
@@ -292,12 +280,10 @@ class TestServiceTwoPhaseIntegration:
             service.shutdown()
 
     def test_service_two_phase_analyze_directory(
-        self, temp_project: Dict[str, Path], two_phase_config: Config
+        self, temp_project: Dict[str, Path], config: Config
     ) -> None:
-        """Test service analyze_directory in two-phase mode."""
-        service = CrossFileContextService(
-            config=two_phase_config, project_root=str(temp_project["root"])
-        )
+        """Test service analyze_directory (always uses two-phase analysis)."""
+        service = CrossFileContextService(config=config, project_root=str(temp_project["root"]))
 
         try:
             stats = service.analyze_directory(str(temp_project["src"]))
@@ -311,89 +297,26 @@ class TestServiceTwoPhaseIntegration:
         finally:
             service.shutdown()
 
-    def test_service_direct_vs_two_phase_produces_relationships(
-        self, temp_project: Dict[str, Path], direct_config: Config, two_phase_config: Config
+    def test_service_produces_relationships(
+        self, temp_project: Dict[str, Path], config: Config
     ) -> None:
-        """Test both modes produce relationships."""
-        # Direct mode
-        direct_service = CrossFileContextService(
-            config=direct_config, project_root=str(temp_project["root"])
-        )
+        """Test service produces relationships with two-phase analysis."""
+        service = CrossFileContextService(config=config, project_root=str(temp_project["root"]))
         try:
-            direct_service.analyze_directory(str(temp_project["src"]))
-            direct_rels = direct_service._graph.get_all_relationships()
+            service.analyze_directory(str(temp_project["src"]))
+            rels = service._graph.get_all_relationships()
         finally:
-            direct_service.shutdown()
+            service.shutdown()
 
-        # Two-phase mode
-        two_phase_service = CrossFileContextService(
-            config=two_phase_config, project_root=str(temp_project["root"])
-        )
-        try:
-            two_phase_service.analyze_directory(str(temp_project["src"]))
-            two_phase_rels = two_phase_service._graph.get_all_relationships()
-        finally:
-            two_phase_service.shutdown()
-
-        # Both should produce relationships
-        assert len(direct_rels) > 0
-        assert len(two_phase_rels) > 0
+        assert len(rels) > 0
 
     def test_service_two_phase_relationship_builder_initialized(
-        self, temp_project: Dict[str, Path], two_phase_config: Config
+        self, temp_project: Dict[str, Path], config: Config
     ) -> None:
-        """Test that RelationshipBuilder is initialized in two-phase mode."""
-        service = CrossFileContextService(
-            config=two_phase_config, project_root=str(temp_project["root"])
-        )
+        """Test that RelationshipBuilder is always initialized (two-phase always enabled)."""
+        service = CrossFileContextService(config=config, project_root=str(temp_project["root"]))
 
         try:
             assert service._relationship_builder is not None
         finally:
             service.shutdown()
-
-    def test_service_direct_mode_no_relationship_builder(
-        self, temp_project: Dict[str, Path], direct_config: Config
-    ) -> None:
-        """Test that RelationshipBuilder is not initialized in direct mode."""
-        service = CrossFileContextService(
-            config=direct_config, project_root=str(temp_project["root"])
-        )
-
-        try:
-            assert service._relationship_builder is None
-        finally:
-            service.shutdown()
-
-
-class TestConfigTwoPhaseOption:
-    """Tests for two-phase analysis configuration."""
-
-    def test_config_default_is_two_phase_mode(self, tmp_path: Path) -> None:
-        """Test default configuration uses two-phase mode."""
-        config = Config(config_path=tmp_path / "nonexistent.yml")
-        assert config.use_two_phase_analysis is True
-
-    def test_config_enable_two_phase(self, tmp_path: Path) -> None:
-        """Test enabling two-phase mode via config."""
-        config_file = tmp_path / ".cross_file_context_links.yml"
-        config_file.write_text("use_two_phase_analysis: true\n")
-
-        config = Config(config_path=config_file)
-        assert config.use_two_phase_analysis is True
-
-    def test_config_disable_two_phase(self, tmp_path: Path) -> None:
-        """Test explicitly disabling two-phase mode."""
-        config_file = tmp_path / ".cross_file_context_links.yml"
-        config_file.write_text("use_two_phase_analysis: false\n")
-
-        config = Config(config_path=config_file)
-        assert config.use_two_phase_analysis is False
-
-    def test_config_invalid_value_uses_default(self, tmp_path: Path) -> None:
-        """Test invalid config value falls back to default."""
-        config_file = tmp_path / ".cross_file_context_links.yml"
-        config_file.write_text("use_two_phase_analysis: 'yes'\n")  # Invalid: not a bool
-
-        config = Config(config_path=config_file)
-        assert config.use_two_phase_analysis is True  # Default

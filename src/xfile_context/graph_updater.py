@@ -21,11 +21,12 @@ See TDD Section 3.6.3 for detailed specifications.
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from xfile_context.analyzers.python_analyzer import PythonAnalyzer
 from xfile_context.file_watcher import FileWatcher
 from xfile_context.models import FileMetadata, Relationship, RelationshipGraph
+from xfile_context.relationship_builder import RelationshipBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ class GraphUpdater:
         graph: RelationshipGraph,
         analyzer: PythonAnalyzer,
         file_watcher: FileWatcher,
+        relationship_builder: Optional[RelationshipBuilder] = None,
     ):
         """Initialize graph updater.
 
@@ -70,10 +72,13 @@ class GraphUpdater:
             graph: RelationshipGraph to update.
             analyzer: PythonAnalyzer for re-analyzing modified files.
             file_watcher: FileWatcher for detecting file changes.
+            relationship_builder: RelationshipBuilder for two-phase analysis.
+                Required for Issue #133 fix (symbol-based relationship rebuilding).
         """
         self.graph = graph
         self.analyzer = analyzer
         self.file_watcher = file_watcher
+        self.relationship_builder = relationship_builder
         self.project_root = Path(file_watcher.project_root).resolve()
 
     def _validate_filepath(self, filepath: str) -> bool:
@@ -139,12 +144,16 @@ class GraphUpdater:
             old_metadata = self.graph.get_file_metadata(filepath)
 
             # Stage 2: Remove old relationships
-            # Note: PythonAnalyzer.analyze_file() calls _store_relationships()
+            # Note: PythonAnalyzer.analyze_file_two_phase() calls _store_relationships()
             # which already removes old relationships before adding new ones
-            # So we just need to call analyze_file()
+            # So we just need to call analyze_file_two_phase()
 
-            # Stage 3: Re-analyze file (this also removes old relationships)
-            success = self.analyzer.analyze_file(filepath)
+            # Stage 3: Re-analyze file using two-phase analysis
+            # (this also removes old relationships)
+            # Two-phase analysis is always enabled (Issue #133 fix requirement)
+            success = self.analyzer.analyze_file_two_phase(
+                filepath, relationship_builder=self.relationship_builder
+            )
 
             if not success:
                 # Analysis failed (syntax error, timeout, etc.)
@@ -319,8 +328,11 @@ class GraphUpdater:
         try:
             logger.debug(f"Updating graph for created file: {filepath}")
 
-            # Analyze new file (this also adds relationships to graph)
-            success = self.analyzer.analyze_file(filepath)
+            # Analyze new file using two-phase analysis (this also adds relationships to graph)
+            # Two-phase analysis is always enabled (Issue #133 fix requirement)
+            success = self.analyzer.analyze_file_two_phase(
+                filepath, relationship_builder=self.relationship_builder
+            )
 
             if not success:
                 logger.warning(f"Analysis failed for new file {filepath}")

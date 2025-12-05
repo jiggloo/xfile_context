@@ -208,17 +208,6 @@ class CrossFileContextService:
             )
         )
 
-        # Initialize graph updater
-        self._graph_updater = (
-            graph_updater
-            if graph_updater is not None
-            else GraphUpdater(
-                graph=self._graph,
-                analyzer=self._analyzer,
-                file_watcher=self._file_watcher,
-            )
-        )
-
         # Track if watcher is running
         self._watcher_running = False
 
@@ -268,20 +257,27 @@ class CrossFileContextService:
 
         # Initialize RelationshipBuilder for two-phase analysis (Issue #125)
         # The builder is shared across files for cross-file symbol resolution
-        self._relationship_builder: Optional[RelationshipBuilder] = None
-        if self.config.use_two_phase_analysis:
-            self._relationship_builder = RelationshipBuilder()
-            logger.info("Two-phase analysis mode enabled")
+        # Note: Two-phase analysis is always enabled (Issue #133 fix requirement)
+        self._relationship_builder = RelationshipBuilder()
 
         # Initialize SymbolDataCache for incremental analysis (Issue #125 Phase 3)
-        self._symbol_cache: Optional[SymbolDataCache] = None
-        if self.config.use_two_phase_analysis and self.config.enable_symbol_cache:
-            self._symbol_cache = SymbolDataCache(
-                max_entries=self.config.symbol_cache_max_entries,
+        # Note: Symbol caching is always enabled (Issue #133 fix requirement)
+        self._symbol_cache = SymbolDataCache(
+            max_entries=self.config.symbol_cache_max_entries,
+        )
+        logger.info(f"Symbol cache enabled (max {self.config.symbol_cache_max_entries} entries)")
+
+        # Initialize graph updater (after RelationshipBuilder for two-phase support)
+        self._graph_updater = (
+            graph_updater
+            if graph_updater is not None
+            else GraphUpdater(
+                graph=self._graph,
+                analyzer=self._analyzer,
+                file_watcher=self._file_watcher,
+                relationship_builder=self._relationship_builder,
             )
-            logger.info(
-                f"Symbol cache enabled (max {self.config.symbol_cache_max_entries} entries)"
-            )
+        )
 
         logger.info(f"CrossFileContextService initialized with project_root={self._project_root}")
 
@@ -336,16 +332,24 @@ class CrossFileContextService:
         1. The target file is analyzed if stale
         2. All transitive dependencies are checked for staleness
         3. Stale files are processed in topological order (dependencies first)
-        4. Files with pending relationships are restored without re-analysis
+        4. Files with pending relationships have them rebuilt from symbol data
+
+        Issue #133 Fix:
+        The StalenessResolver now accepts a RelationshipBuilder to rebuild
+        relationships for pending files from their FileSymbolData. This is
+        cleaner than the previous store/restore approach and handles all
+        edge cases correctly.
 
         Args:
             file_path: Target file being read via read_file_with_context().
         """
         # Create staleness resolver with callbacks to service methods
+        # Pass the RelationshipBuilder for Issue #133 fix
         resolver = StalenessResolver(
             graph=self._graph,
             needs_analysis=self._needs_analysis,
             analyze_file=self._analyze_file_for_staleness,
+            relationship_builder=self._relationship_builder,
         )
 
         # Resolve staleness for target and all transitive dependencies
@@ -355,7 +359,7 @@ class CrossFileContextService:
         """Analyze a file during staleness resolution (Issue #117 Option B).
 
         This is a callback used by StalenessResolver to analyze stale files.
-        It uses the appropriate analysis method based on configuration.
+        Uses two-phase analysis (always enabled per Issue #133 fix requirement).
 
         Args:
             file_path: File to analyze.
@@ -365,12 +369,9 @@ class CrossFileContextService:
         """
         logger.debug(f"Staleness resolution: analyzing {file_path}")
 
-        if self.config.use_two_phase_analysis:
-            return self._analyzer.analyze_file_two_phase(
-                file_path, relationship_builder=self._relationship_builder
-            )
-        else:
-            return self._analyzer.analyze_file(file_path)
+        return self._analyzer.analyze_file_two_phase(
+            file_path, relationship_builder=self._relationship_builder
+        )
 
     def _validate_filepath(self, filepath: str) -> None:
         """Validate filepath for security concerns.
@@ -425,7 +426,9 @@ class CrossFileContextService:
     def analyze_file(self, file_path: str) -> bool:
         """Analyze a single file and add its relationships to the graph.
 
-        Uses two-phase analysis when use_two_phase_analysis config is enabled (Issue #125).
+        Uses two-phase analysis (always enabled per Issue #133 fix requirement):
+        Phase 1: AST -> FileSymbolData (extract symbols)
+        Phase 2: FileSymbolData -> Relationships (via RelationshipBuilder)
 
         Args:
             file_path: Path to Python file to analyze.
@@ -435,14 +438,10 @@ class CrossFileContextService:
         """
         self._validate_filepath(file_path)
 
-        if self.config.use_two_phase_analysis:
-            # Two-phase analysis: AST -> FileSymbolData -> Relationships
-            result = self._analyzer.analyze_file_two_phase(
-                file_path, relationship_builder=self._relationship_builder
-            )
-        else:
-            # Direct analysis: AST -> Relationships (original flow)
-            result = self._analyzer.analyze_file(file_path)
+        # Two-phase analysis: AST -> FileSymbolData -> Relationships
+        result = self._analyzer.analyze_file_two_phase(
+            file_path, relationship_builder=self._relationship_builder
+        )
 
         # Collect warnings from dynamic pattern detectors
         self._collect_detector_warnings()
@@ -452,10 +451,11 @@ class CrossFileContextService:
     def analyze_directory(self, directory_path: Optional[str] = None) -> Dict[str, Any]:
         """Analyze all Python files in a directory.
 
-        Uses two-phase analysis when use_two_phase_analysis config is enabled (Issue #125).
-        Two-phase directory analysis provides better cross-file resolution by:
+        Uses two-phase analysis (always enabled per Issue #133 fix requirement):
         1. Extracting symbol data from all files first
         2. Building relationships with full project context
+
+        This provides better cross-file resolution than analyzing files independently.
 
         Args:
             directory_path: Path to directory (default: project_root).
@@ -488,42 +488,28 @@ class CrossFileContextService:
             files_to_analyze.append(file_path)
             stats["total"] += 1
 
-        if self.config.use_two_phase_analysis:
-            # Two-phase analysis: Extract all symbols first, then build relationships
-            # This provides better cross-file resolution
-            # Pass symbol cache for incremental analysis (Issue #125 Phase 3)
-            success, failed, self._relationship_builder = self._analyzer.analyze_project_two_phase(
-                files_to_analyze,
-                relationship_builder=self._relationship_builder,
-                symbol_cache=self._symbol_cache,
-            )
-            stats["success"] = success
-            stats["failed"] = failed
-            # Add cache statistics if available
-            if self._symbol_cache is not None:
-                cache_stats = self._symbol_cache.get_statistics()
-                stats["cache_hits"] = cache_stats["hits"]
-                stats["cache_hit_rate"] = cache_stats["hit_rate"]
-        else:
-            # Direct analysis: Analyze each file independently
-            for file_path in files_to_analyze:
-                try:
-                    if self._analyzer.analyze_file(file_path):
-                        stats["success"] += 1
-                    else:
-                        stats["failed"] += 1
-                except Exception as e:
-                    logger.error(f"Error analyzing {file_path}: {e}")
-                    stats["failed"] += 1
+        # Two-phase analysis: Extract all symbols first, then build relationships
+        # This provides better cross-file resolution
+        # Pass symbol cache for incremental analysis (Issue #125 Phase 3)
+        success, failed, self._relationship_builder = self._analyzer.analyze_project_two_phase(
+            files_to_analyze,
+            relationship_builder=self._relationship_builder,
+            symbol_cache=self._symbol_cache,
+        )
+        stats["success"] = success
+        stats["failed"] = failed
+        # Add cache statistics
+        cache_stats = self._symbol_cache.get_statistics()
+        stats["cache_hits"] = cache_stats["hits"]
+        stats["cache_hit_rate"] = cache_stats["hit_rate"]
 
         stats["elapsed_ms"] = (time.time() - start_time) * 1000
 
         # Collect warnings from dynamic pattern detectors
         self._collect_detector_warnings()
 
-        analysis_mode = "two-phase" if self.config.use_two_phase_analysis else "direct"
         logger.info(
-            f"Analyzed {stats['total']} files ({analysis_mode}) in {stats['elapsed_ms']:.1f}ms: "
+            f"Analyzed {stats['total']} files (two-phase) in {stats['elapsed_ms']:.1f}ms: "
             f"{stats['success']} success, {stats['failed']} failed, {stats['skipped']} skipped"
         )
 
@@ -1534,7 +1520,7 @@ class CrossFileContextService:
         """
         return self._injection_logger.get_log_path()
 
-    def get_symbol_cache_statistics(self) -> Optional[Dict[str, Any]]:
+    def get_symbol_cache_statistics(self) -> Dict[str, Any]:
         """Get symbol cache statistics for monitoring.
 
         Returns statistics about the symbol cache including:
@@ -1546,10 +1532,8 @@ class CrossFileContextService:
         - invalidations: Number of cache invalidations
 
         Returns:
-            Dictionary with cache statistics, or None if cache not enabled.
+            Dictionary with cache statistics.
         """
-        if self._symbol_cache is None:
-            return None
         return self._symbol_cache.get_statistics()
 
     def get_session_metrics(self) -> SessionMetrics:
@@ -1612,16 +1596,12 @@ class CrossFileContextService:
         # Clear graph
         self._graph.clear()
 
-        # Clear RelationshipBuilder if using two-phase analysis (Issue #125)
+        # Clear RelationshipBuilder (Issue #125)
         # This prevents memory accumulation in long-running sessions
-        if self._relationship_builder is not None:
-            self._relationship_builder.clear()
-            self._relationship_builder = None
+        self._relationship_builder.clear()
 
-        # Clear SymbolDataCache if using incremental analysis (Issue #125 Phase 3)
-        if self._symbol_cache is not None:
-            self._symbol_cache.invalidate_all()
-            self._symbol_cache = None
+        # Clear SymbolDataCache (Issue #125 Phase 3)
+        self._symbol_cache.invalidate_all()
 
         # Close injection logger (ensures final flush)
         self._injection_logger.close()

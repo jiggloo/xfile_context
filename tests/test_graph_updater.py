@@ -554,10 +554,12 @@ class TestAtomicUpdates:
 
         # Create mock analyzer that fails
         analyzer = Mock(spec=PythonAnalyzer)
-        analyzer.analyze_file.side_effect = Exception("Test failure")
+        analyzer.analyze_file_two_phase.side_effect = Exception("Test failure")
 
         # Create updater with failing analyzer
-        updater = GraphUpdater(graph=graph, analyzer=analyzer, file_watcher=file_watcher)
+        updater = GraphUpdater(
+            graph=graph, analyzer=analyzer, file_watcher=file_watcher, relationship_builder=None
+        )
 
         # Attempt update (should fail and rollback)
         success = updater.update_on_modify(str(test_file))
