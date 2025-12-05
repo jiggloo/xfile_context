@@ -524,27 +524,68 @@ class RelationshipGraph:
             logger.error(f"Graph update failed for {rel.source_file} → {rel.target_file}: {e}")
             raise
 
+    def _deduplicate_relationships(self, relationships: List[Relationship]) -> List[Relationship]:
+        """Deduplicate relationships based on key attributes (Issue #144).
+
+        Two relationships are considered duplicates if they have the same:
+        source_file, target_file, relationship_type, line_number, source_symbol,
+        target_symbol, and target_line. The metadata field is intentionally excluded
+        from the deduplication key.
+
+        When duplicates exist, the first occurrence is preserved.
+
+        Args:
+            relationships: List of relationships to deduplicate.
+
+        Returns:
+            List of unique relationships.
+        """
+        seen: Dict[
+            Tuple[str, str, str, int, Optional[str], Optional[str], Optional[int]], Relationship
+        ] = {}
+        for rel in relationships:
+            key = (
+                rel.source_file,
+                rel.target_file,
+                rel.relationship_type,
+                rel.line_number,
+                rel.source_symbol,
+                rel.target_symbol,
+                rel.target_line,
+            )
+            if key not in seen:
+                seen[key] = rel
+        return list(seen.values())
+
     def get_dependencies(self, filepath: str) -> List[Relationship]:
         """Get relationships where filepath depends on others.
+
+        Deduplicates relationships to prevent duplicate entries in injected context
+        (Issue #144). See _deduplicate_relationships() for deduplication logic.
 
         Args:
             filepath: Path to query.
 
         Returns:
-            List of relationships where filepath is the source.
+            List of unique relationships where filepath is the source.
         """
-        return [rel for rel in self._relationships if rel.source_file == filepath]
+        file_rels = [rel for rel in self._relationships if rel.source_file == filepath]
+        return self._deduplicate_relationships(file_rels)
 
     def get_dependents(self, filepath: str) -> List[Relationship]:
         """Get relationships where others depend on filepath.
 
+        Deduplicates relationships to prevent duplicate entries (Issue #144).
+        See _deduplicate_relationships() for deduplication logic.
+
         Args:
             filepath: Path to query.
 
         Returns:
-            List of relationships where filepath is the target.
+            List of unique relationships where filepath is the target.
         """
-        return [rel for rel in self._relationships if rel.target_file == filepath]
+        file_rels = [rel for rel in self._relationships if rel.target_file == filepath]
+        return self._deduplicate_relationships(file_rels)
 
     def remove_relationships_for_file(self, filepath: str) -> None:
         """Remove all relationships involving file.

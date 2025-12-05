@@ -615,6 +615,164 @@ class TestRelationshipGraph:
         assert len(errors) > 0
         assert any("Duplicate relationship" in error for error in errors)
 
+    def test_get_dependencies_deduplicates(self):
+        """Test get_dependencies filters out duplicate relationships (Issue #144)."""
+        graph = RelationshipGraph()
+
+        # Create duplicate relationships with different object instances but same attributes
+        rel1 = Relationship(
+            source_file="src/main.py",
+            target_file="src/models.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+            target_symbol="MyClass",
+            target_line=50,
+        )
+        rel2 = Relationship(
+            source_file="src/main.py",
+            target_file="src/models.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+            target_symbol="MyClass",
+            target_line=50,
+        )
+        # Add a non-duplicate relationship
+        rel3 = Relationship(
+            source_file="src/main.py",
+            target_file="src/utils.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=11,
+            target_symbol="helper",
+            target_line=20,
+        )
+
+        # Add all relationships including duplicates
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+        graph.add_relationship(rel3)
+
+        # Get dependencies should return only unique relationships
+        dependencies = graph.get_dependencies("src/main.py")
+
+        # Should have 2 unique relationships, not 3
+        assert len(dependencies) == 2
+
+        # Verify we have both unique relationships
+        target_files = {rel.target_file for rel in dependencies}
+        assert "src/models.py" in target_files
+        assert "src/utils.py" in target_files
+
+    def test_get_dependents_deduplicates(self):
+        """Test get_dependents filters out duplicate relationships (Issue #144)."""
+        graph = RelationshipGraph()
+
+        # Create duplicate relationships pointing to the same target
+        rel1 = Relationship(
+            source_file="src/main.py",
+            target_file="src/models.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+            target_symbol="MyClass",
+            target_line=50,
+        )
+        rel2 = Relationship(
+            source_file="src/main.py",
+            target_file="src/models.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+            target_symbol="MyClass",
+            target_line=50,
+        )
+        # Add a non-duplicate relationship
+        rel3 = Relationship(
+            source_file="src/other.py",
+            target_file="src/models.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=5,
+            target_symbol="MyClass",
+            target_line=50,
+        )
+
+        # Add all relationships including duplicates
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+        graph.add_relationship(rel3)
+
+        # Get dependents should return only unique relationships
+        dependents = graph.get_dependents("src/models.py")
+
+        # Should have 2 unique relationships, not 3
+        assert len(dependents) == 2
+
+        # Verify we have both unique relationships
+        source_files = {rel.source_file for rel in dependents}
+        assert "src/main.py" in source_files
+        assert "src/other.py" in source_files
+
+    def test_get_dependencies_deduplicates_with_none_fields(self):
+        """Test deduplication handles None values in optional fields correctly (Issue #144)."""
+        graph = RelationshipGraph()
+
+        # Duplicate relationships with None values in optional fields
+        rel1 = Relationship(
+            source_file="src/main.py",
+            target_file="src/models.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+            source_symbol=None,
+            target_symbol=None,
+            target_line=None,
+        )
+        rel2 = Relationship(
+            source_file="src/main.py",
+            target_file="src/models.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+            source_symbol=None,
+            target_symbol=None,
+            target_line=None,
+        )
+
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+
+        dependencies = graph.get_dependencies("src/main.py")
+
+        # Should deduplicate to 1 relationship
+        assert len(dependencies) == 1
+
+    def test_get_dependencies_different_source_symbols_not_duplicates(self):
+        """Test relationships with different source_symbols are kept separate (Issue #144)."""
+        graph = RelationshipGraph()
+
+        # Two relationships that differ only in source_symbol
+        rel1 = Relationship(
+            source_file="src/main.py",
+            target_file="src/models.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+            source_symbol="ClassA",
+            target_symbol="MyClass",
+            target_line=50,
+        )
+        rel2 = Relationship(
+            source_file="src/main.py",
+            target_file="src/models.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+            source_symbol="ClassB",
+            target_symbol="MyClass",
+            target_line=50,
+        )
+
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+
+        dependencies = graph.get_dependencies("src/main.py")
+
+        # Should keep both since source_symbol differs
+        assert len(dependencies) == 2
+
     def test_validate_graph_detects_index_inconsistency(self):
         """Test validation detects bidirectional index inconsistencies (EC-19)."""
         graph = RelationshipGraph()
