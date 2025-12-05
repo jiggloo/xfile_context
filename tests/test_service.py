@@ -2492,3 +2492,202 @@ helper_two()
             )
 
             service.shutdown()
+
+
+class TestRecentDefinitionsDeduplication:
+    """Tests for deduplication in 'recent definitions' section (Issue #144).
+
+    The deduplication key is: (target_file, target_line, source_file, relationship_type).
+    This key excludes usage line number because a single function definition
+    is sufficient for all usages in the file.
+    """
+
+    def test_deduplicate_same_function_multiple_usages(self):
+        """Test that a function used multiple times in a file appears only once.
+
+        When a function like my_helper() is called on lines 5, 10, and 15,
+        the recent definitions should only show my_helper() once.
+        """
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # Add multiple relationships for the same function used at different lines
+            # (simulates calling my_helper() on lines 5, 10, and 15)
+            for usage_line in [5, 10, 15]:
+                rel = Relationship(
+                    source_file=main_path,
+                    target_file=utils_path,
+                    relationship_type=RelationshipType.FUNCTION_CALL,
+                    line_number=usage_line,  # Different usage lines
+                    target_symbol="my_helper",
+                    target_line=10,  # Same definition line
+                )
+                graph.add_relationship(rel)
+
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 3))
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create the files
+            Path(main_path).write_text("# main\n")
+            Path(utils_path).write_text("# utils\n\n\n\n\n\n\n\n\ndef my_helper():\n    pass\n")
+
+            rels = graph.get_dependencies(main_path)
+            context, _ = service._assemble_context(main_path, rels)
+
+            # Count occurrences of the function in recent definitions
+            # It should appear exactly once
+            occurrences = context.count("def my_helper()")
+            assert occurrences == 1, (
+                f"Expected my_helper() to appear once, but found {occurrences} times.\n"
+                f"Context:\n{context}"
+            )
+
+            service.shutdown()
+
+    def test_different_functions_not_deduplicated(self):
+        """Test that different functions from the same file are all shown."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # Add relationships for different functions
+            for i, (symbol, def_line) in enumerate(
+                [
+                    ("func_a", 1),
+                    ("func_b", 3),
+                    ("func_c", 5),
+                ]
+            ):
+                rel = Relationship(
+                    source_file=main_path,
+                    target_file=utils_path,
+                    relationship_type=RelationshipType.FUNCTION_CALL,
+                    line_number=i + 1,
+                    target_symbol=symbol,
+                    target_line=def_line,
+                )
+                graph.add_relationship(rel)
+
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 3))
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create the files
+            Path(main_path).write_text("# main\n")
+            Path(utils_path).write_text(
+                "def func_a(): pass\n\ndef func_b(): pass\n\ndef func_c(): pass\n"
+            )
+
+            rels = graph.get_dependencies(main_path)
+            context, _ = service._assemble_context(main_path, rels)
+
+            # All three functions should appear
+            assert "def func_a()" in context, "func_a not found"
+            assert "def func_b()" in context, "func_b not found"
+            assert "def func_c()" in context, "func_c not found"
+
+            service.shutdown()
+
+    def test_same_function_different_relationship_types_deduplicated(self):
+        """Test that same function with different relationship types is shown once.
+
+        If a symbol is both imported and called, it should only appear once
+        in recent definitions since it's the same definition.
+        """
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # Same function, different relationship types
+            for rel_type in [RelationshipType.IMPORT, RelationshipType.FUNCTION_CALL]:
+                rel = Relationship(
+                    source_file=main_path,
+                    target_file=utils_path,
+                    relationship_type=rel_type,
+                    line_number=1,
+                    target_symbol="my_func",
+                    target_line=5,
+                )
+                graph.add_relationship(rel)
+
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 2))
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create the files
+            Path(main_path).write_text("from utils import my_func\nmy_func()\n")
+            Path(utils_path).write_text("# utils\n\n\n\ndef my_func():\n    pass\n")
+
+            rels = graph.get_dependencies(main_path)
+            context, _ = service._assemble_context(main_path, rels)
+
+            # Count occurrences - should appear twice since different relationship types
+            # are part of the dedup key
+            occurrences = context.count("def my_func()")
+            assert occurrences == 2, (
+                f"Expected my_func() to appear twice (one per rel type), "
+                f"but found {occurrences} times.\nContext:\n{context}"
+            )
+
+            service.shutdown()
+
+    def test_dedup_key_includes_target_line(self):
+        """Test that deduplication considers target_line (definition line).
+
+        Two usages pointing to different definition lines should both appear
+        (even if they have the same symbol name, which shouldn't happen normally).
+        """
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # Same symbol name but different definition lines (edge case)
+            for target_line in [1, 5]:
+                rel = Relationship(
+                    source_file=main_path,
+                    target_file=utils_path,
+                    relationship_type=RelationshipType.FUNCTION_CALL,
+                    line_number=1,
+                    target_symbol="func",
+                    target_line=target_line,
+                )
+                graph.add_relationship(rel)
+
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 2))
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create the files
+            Path(main_path).write_text("# main\n")
+            Path(utils_path).write_text("def func(): pass\n\n\n\ndef func(): pass\n")
+
+            rels = graph.get_dependencies(main_path)
+            context, _ = service._assemble_context(main_path, rels)
+
+            # Should have two entries since target_line is different
+            # Count "From utils_path" occurrences (each snippet starts with this)
+            from_count = context.count(f"From {utils_path}:")
+            assert from_count == 2, (
+                f"Expected 2 'From' entries (different target_line), "
+                f"but found {from_count}.\nContext:\n{context}"
+            )
+
+            service.shutdown()
