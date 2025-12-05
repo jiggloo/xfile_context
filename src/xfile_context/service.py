@@ -1125,7 +1125,9 @@ class CrossFileContextService:
         # symbols are DEFINED in the dependency file, not where they're USED
         # in the target file. This enables efficient snippet-based caching.
         context_parts.append("This file imports from:")
-        for target_file_path, rels in files_imported.items():
+        # Sort references by file path for deterministic output (Issue #131)
+        for target_file_path in sorted(files_imported.keys()):
+            rels = files_imported[target_file_path]
             symbols = []
             for rel in rels:
                 if rel.target_symbol:
@@ -1137,9 +1139,10 @@ class CrossFileContextService:
                         symbols.append(f"{rel.target_symbol}()")
                 else:
                     symbols.append(f"(line {rel.line_number})")
-            symbols_str = ", ".join(symbols[:3])  # Limit to 3 per file
-            if len(symbols) > 3:
-                symbols_str += f" (+{len(symbols) - 3} more)"
+            # Sort symbols for deterministic output (Issue #131)
+            symbols.sort()
+            # Print all symbols without truncation (Issue #131)
+            symbols_str = ", ".join(symbols)
             context_parts.append(f"- {Path(target_file_path).name}: {symbols_str}")
 
         context_parts.append("")

@@ -2089,3 +2089,227 @@ class TestDependencySummaryLineNumbers:
             assert "line 15" in result.injected_context
 
             service.shutdown()
+
+
+class TestDeterministicOutput:
+    """Tests that context output is deterministic/idempotent (Issue #131).
+
+    When the same file is read multiple times without modifications,
+    the output should be identical. This requires:
+    - References sorted by file path
+    - Symbols sorted alphabetically within each reference
+    - All symbols printed (no truncation)
+    """
+
+    def test_assemble_context_sorts_references_by_file_path(self):
+        """Test that references are sorted alphabetically by file path."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            # Create paths that would be unsorted if insertion order was used
+            zebra_path = str(Path(tmpdir) / "zebra.py")
+            alpha_path = str(Path(tmpdir) / "alpha.py")
+            middle_path = str(Path(tmpdir) / "middle.py")
+
+            # Add relationships in non-alphabetical order
+            for target_path, symbol in [
+                (zebra_path, "z_func"),
+                (alpha_path, "a_func"),
+                (middle_path, "m_func"),
+            ]:
+                rel = Relationship(
+                    source_file=main_path,
+                    target_file=target_path,
+                    relationship_type=RelationshipType.IMPORT,
+                    line_number=1,
+                    target_symbol=symbol,
+                    target_line=10,
+                )
+                graph.add_relationship(rel)
+                graph.set_file_metadata(target_path, _create_file_metadata(target_path, 0))
+
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 3))
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create files
+            Path(main_path).write_text("# main\n")
+            for p in [zebra_path, alpha_path, middle_path]:
+                Path(p).write_text("def func(): pass\n")
+
+            rels = graph.get_dependencies(main_path)
+            context, _ = service._assemble_context(main_path, rels)
+
+            # Find the order of file references in the output
+            alpha_pos = context.find("alpha.py")
+            middle_pos = context.find("middle.py")
+            zebra_pos = context.find("zebra.py")
+
+            # All should be present
+            assert alpha_pos != -1, "alpha.py not found in context"
+            assert middle_pos != -1, "middle.py not found in context"
+            assert zebra_pos != -1, "zebra.py not found in context"
+
+            # Should be in alphabetical order
+            assert alpha_pos < middle_pos < zebra_pos, (
+                f"References not sorted: alpha={alpha_pos}, "
+                f"middle={middle_pos}, zebra={zebra_pos}"
+            )
+
+            service.shutdown()
+
+    def test_assemble_context_sorts_symbols_within_reference(self):
+        """Test that symbols are sorted alphabetically within each file reference."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # Add multiple symbols from the same file in non-alphabetical order
+            for symbol, line in [("zebra", 30), ("alpha", 10), ("middle", 20)]:
+                rel = Relationship(
+                    source_file=main_path,
+                    target_file=utils_path,
+                    relationship_type=RelationshipType.IMPORT,
+                    line_number=1,
+                    target_symbol=symbol,
+                    target_line=line,
+                )
+                graph.add_relationship(rel)
+
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 3))
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create files
+            Path(main_path).write_text("# main\n")
+            Path(utils_path).write_text(
+                "def alpha(): pass\ndef middle(): pass\ndef zebra(): pass\n"
+            )
+
+            rels = graph.get_dependencies(main_path)
+            context, _ = service._assemble_context(main_path, rels)
+
+            # Find the utils.py line in context
+            for line in context.split("\n"):
+                if "utils.py" in line:
+                    # Symbols should be in alphabetical order
+                    alpha_pos = line.find("alpha()")
+                    middle_pos = line.find("middle()")
+                    zebra_pos = line.find("zebra()")
+
+                    assert alpha_pos != -1, "alpha() not found"
+                    assert middle_pos != -1, "middle() not found"
+                    assert zebra_pos != -1, "zebra() not found"
+
+                    assert alpha_pos < middle_pos < zebra_pos, (
+                        f"Symbols not sorted: alpha={alpha_pos}, "
+                        f"middle={middle_pos}, zebra={zebra_pos}"
+                    )
+                    break
+            else:
+                pytest.fail("utils.py line not found in context")
+
+            service.shutdown()
+
+    def test_assemble_context_prints_all_symbols_no_truncation(self):
+        """Test that all symbols are printed without truncation."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+
+            # Add more than 3 symbols (previous truncation limit was 3)
+            symbols = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"]
+            for i, symbol in enumerate(symbols):
+                rel = Relationship(
+                    source_file=main_path,
+                    target_file=utils_path,
+                    relationship_type=RelationshipType.IMPORT,
+                    line_number=1,
+                    target_symbol=symbol,
+                    target_line=i * 10 + 10,
+                )
+                graph.add_relationship(rel)
+
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, len(symbols)))
+            graph.set_file_metadata(utils_path, _create_file_metadata(utils_path, 0))
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create files
+            Path(main_path).write_text("# main\n")
+            Path(utils_path).write_text("\n".join(f"def {s}(): pass" for s in symbols) + "\n")
+
+            rels = graph.get_dependencies(main_path)
+            context, _ = service._assemble_context(main_path, rels)
+
+            # All symbols should be present
+            for symbol in symbols:
+                assert f"{symbol}()" in context, f"{symbol}() not found in context"
+
+            # Should NOT have truncation marker
+            assert "(+3 more)" not in context, "Truncation marker found"
+            assert "(+" not in context or "(+)" in context, "Some truncation marker found"
+
+            service.shutdown()
+
+    def test_assemble_context_idempotent_output(self):
+        """Test that calling _assemble_context twice produces identical output."""
+        with TemporaryDirectory() as tmpdir:
+            config = Config()
+            graph = RelationshipGraph()
+
+            main_path = str(Path(tmpdir) / "main.py")
+            utils_path = str(Path(tmpdir) / "utils.py")
+            helpers_path = str(Path(tmpdir) / "helpers.py")
+
+            # Add multiple relationships with various symbols
+            for target, symbols in [
+                (utils_path, ["config", "validate", "setup"]),
+                (helpers_path, ["format_data", "parse_input", "cleanup"]),
+            ]:
+                for i, symbol in enumerate(symbols):
+                    rel = Relationship(
+                        source_file=main_path,
+                        target_file=target,
+                        relationship_type=RelationshipType.IMPORT,
+                        line_number=i + 1,
+                        target_symbol=symbol,
+                        target_line=(i + 1) * 10,
+                    )
+                    graph.add_relationship(rel)
+                graph.set_file_metadata(target, _create_file_metadata(target, 0))
+
+            graph.set_file_metadata(main_path, _create_file_metadata(main_path, 6))
+
+            service = CrossFileContextService(config, project_root=tmpdir, graph=graph)
+
+            # Create files
+            Path(main_path).write_text("# main\n")
+            Path(utils_path).write_text(
+                "def config(): pass\ndef validate(): pass\ndef setup(): pass\n"
+            )
+            Path(helpers_path).write_text(
+                "def format_data(): pass\ndef parse_input(): pass\ndef cleanup(): pass\n"
+            )
+
+            rels = graph.get_dependencies(main_path)
+
+            # Call multiple times
+            context1, _ = service._assemble_context(main_path, rels)
+            context2, _ = service._assemble_context(main_path, rels)
+            context3, _ = service._assemble_context(main_path, rels)
+
+            # All calls should produce identical output
+            assert context1 == context2, "First and second call produced different output"
+            assert context2 == context3, "Second and third call produced different output"
+
+            service.shutdown()
