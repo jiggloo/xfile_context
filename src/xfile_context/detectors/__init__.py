@@ -13,6 +13,7 @@ Components:
 - ConditionalImportDetector: Detector for conditional import relationships
 - WildcardImportDetector: Detector for wildcard import relationships
 - FunctionCallDetector: Detector for simple function call relationships
+- FunctionDefinitionDetector: Detector for function/method definitions (Issue #140)
 - ClassInheritanceDetector: Detector for class inheritance relationships
 
 Dynamic Pattern Detectors (Section 3.5.4, Section 3.9.1):
@@ -39,6 +40,7 @@ from xfile_context.detectors.dynamic_pattern_detector import (
 )
 from xfile_context.detectors.exec_eval_detector import ExecEvalDetector
 from xfile_context.detectors.function_call_detector import FunctionCallDetector
+from xfile_context.detectors.function_definition_detector import FunctionDefinitionDetector
 from xfile_context.detectors.import_detector import ImportDetector
 from xfile_context.detectors.metaclass_detector import MetaclassDetector
 from xfile_context.detectors.monkey_patching_detector import MonkeyPatchingDetector
@@ -54,6 +56,7 @@ __all__ = [
     "ConditionalImportDetector",
     "WildcardImportDetector",
     "FunctionCallDetector",
+    "FunctionDefinitionDetector",
     "ClassInheritanceDetector",
     # Dynamic pattern detectors (Section 3.5.4)
     "DynamicPatternDetector",

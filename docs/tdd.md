@@ -2141,22 +2141,28 @@ class RelationshipDetector:
    - Limitation (DD-1): v0.1.0 handles ONLY simple calls, not method chains or nested attributes
    - Output: FUNCTION_CALL relationships
 
-3. **ClassInheritanceDetector**:
+3. **FunctionDefinitionDetector** (Issue #140):
+   - Detects: Function and method definitions (`def foo():`, `async def bar():`)
+   - Extracts: SymbolDefinition entries with name, line range, signature, decorators, docstring
+   - Enables: Line number resolution in RelationshipBuilder._get_target_line()
+   - Output: SymbolDefinition objects (no relationships)
+
+4. **ClassInheritanceDetector**:
    - Detects: `class ChildClass(ParentClass):`
    - Handles: Single and multiple inheritance
    - Output: INHERITANCE relationships
 
-4. **AliasedImportDetector**:
+5. **AliasedImportDetector**:
    - Detects: `import foo as bar`, `from foo import baz as qux`
    - Tracks: Original name and alias (EC-3)
    - Output: IMPORT relationships with alias metadata
 
-5. **ConditionalImportDetector**:
+6. **ConditionalImportDetector**:
    - Detects: `if TYPE_CHECKING:`, `if sys.version_info >= ...:`
    - Tracks: Conditional nature in metadata (EC-5)
    - Output: IMPORT relationships marked as conditional
 
-6. **WildcardImportDetector**:
+7. **WildcardImportDetector**:
    - Detects: `from module import *`
    - Limitation (EC-4): Tracks at module level only, cannot track specific function usage
    - Output: IMPORT relationships marked as wildcard
@@ -6721,6 +6727,21 @@ These gaps were identified during TDD creation itself, before implementation beg
   - TDD Section 1.1 has been updated to reflect Python 3.10+ requirement (was Python 3.8+)
 - **Status**: Resolved
 - **Resolution Date**: 2025-12-02
+
+**G-4: Missing FunctionDefinitionDetector (Issue #140)**
+- **Discovery Date**: 2025-12-05
+- **Discovered During**: Issue #138 investigation revealed functions don't have line numbers on first read_with_context() call
+- **Description**: FunctionCallDetector produces FUNCTION_CALL references but no detector extracts SymbolDefinition entries for regular (non-decorated) functions. This means _get_target_line() in RelationshipBuilder cannot resolve line numbers for function symbols.
+- **Root Cause**: The detector pattern focused on relationships (imports, calls, inheritance) but missed the need for definition extraction for functions
+- **Impact**: Functions do not show line numbers in injected context (classes work because ClassInheritanceDetector extracts class definitions)
+- **Affected Components**: Detector system (Section 3.4.4), RelationshipBuilder._get_target_line()
+- **Resolution**: Created FunctionDefinitionDetector that:
+  - Detects ast.FunctionDef and ast.AsyncFunctionDef nodes
+  - Extracts SymbolDefinition entries (name, line range, signature, decorators, docstring)
+  - Complements FunctionCallDetector (references) with definitions
+  - Registered in service.py detector registry
+- **Status**: Resolved
+- **Resolution Date**: 2025-12-05
 
 ---
 

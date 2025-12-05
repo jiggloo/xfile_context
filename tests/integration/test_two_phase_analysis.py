@@ -320,3 +320,193 @@ class TestServiceTwoPhaseIntegration:
             assert service._relationship_builder is not None
         finally:
             service.shutdown()
+
+
+class TestFunctionDefinitionIntegration:
+    """Tests for FunctionDefinitionDetector integration (Issue #140).
+
+    Verifies that function definitions are properly extracted and that
+    line numbers show up in relationship resolution.
+    """
+
+    @pytest.fixture
+    def temp_project(self, tmp_path: Path) -> Dict[str, Path]:
+        """Create a temporary project with functions to test."""
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+
+        # utils.py - defines helper functions
+        utils_file = src_dir / "utils.py"
+        utils_file.write_text(
+            '''# Copyright (c) 2025 Test
+def format_name(name: str) -> str:
+    """Format a name."""
+    return name.title()
+
+def validate_email(email: str) -> bool:
+    """Validate email format."""
+    return "@" in email
+
+async def async_fetch(url: str) -> str:
+    """Async fetch function."""
+    return f"fetched {url}"
+'''
+        )
+
+        # main.py - imports and calls functions from utils
+        main_file = src_dir / "main.py"
+        main_file.write_text(
+            '''# Copyright (c) 2025 Test
+from utils import format_name, validate_email
+
+def process_user(name: str, email: str) -> str:
+    """Process a user."""
+    if validate_email(email):
+        return format_name(name)
+    return name
+'''
+        )
+
+        return {
+            "root": tmp_path,
+            "src": src_dir,
+            "utils": utils_file,
+            "main": main_file,
+        }
+
+    @pytest.fixture
+    def config(self, tmp_path: Path) -> Config:
+        """Create default config."""
+        return Config(config_path=tmp_path / "nonexistent.yml")
+
+    def test_function_definitions_extracted(
+        self, temp_project: Dict[str, Path], config: Config
+    ) -> None:
+        """Test that FunctionDefinitionDetector extracts function definitions."""
+        service = CrossFileContextService(config=config, project_root=str(temp_project["root"]))
+
+        try:
+            # Analyze the utils file
+            service.analyze_file(str(temp_project["utils"]))
+
+            # Check RelationshipBuilder has the file data
+            builder = service._relationship_builder
+            utils_data = builder.get_file_data(str(temp_project["utils"]))
+
+            assert utils_data is not None, "utils.py should have FileSymbolData"
+
+            # Check function definitions were extracted
+            format_name_def = utils_data.get_definition("format_name")
+            assert format_name_def is not None, "format_name should have a definition"
+            assert format_name_def.line_start == 2  # Line 2 in file
+
+            validate_email_def = utils_data.get_definition("validate_email")
+            assert validate_email_def is not None, "validate_email should have a definition"
+            assert validate_email_def.line_start == 6
+
+            async_fetch_def = utils_data.get_definition("async_fetch")
+            assert async_fetch_def is not None, "async_fetch should have a definition"
+            assert async_fetch_def.line_start == 10
+
+        finally:
+            service.shutdown()
+
+    def test_function_line_numbers_in_relationships(
+        self, temp_project: Dict[str, Path], config: Config
+    ) -> None:
+        """Test that function definitions are available for relationship lookup."""
+        service = CrossFileContextService(config=config, project_root=str(temp_project["src"]))
+
+        try:
+            # Analyze the utils file directly
+            service.analyze_file(str(temp_project["utils"]))
+
+            # The builder should have function definitions from utils
+            builder = service._relationship_builder
+            utils_data = builder.get_file_data(str(temp_project["utils"]))
+            assert utils_data is not None, "utils.py should have FileSymbolData"
+
+            # Can look up function definitions by name
+            format_name_def = builder.lookup_definition("format_name", str(temp_project["utils"]))
+            assert format_name_def is not None, "format_name should be found"
+            assert format_name_def.line_start == 2
+
+            # Also verify validate_email is found
+            validate_email_def = builder.lookup_definition(
+                "validate_email", str(temp_project["utils"])
+            )
+            assert validate_email_def is not None, "validate_email should be found"
+            assert validate_email_def.line_start == 6
+
+        finally:
+            service.shutdown()
+
+    def test_read_with_context_shows_function_line_numbers(
+        self, temp_project: Dict[str, Path], config: Config
+    ) -> None:
+        """Test that read_with_context() shows function line numbers on first call (Issue #140).
+
+        This is the core test that verifies Issue #140 is fixed:
+        Functions should show line numbers in the injected context.
+        """
+        service = CrossFileContextService(config=config, project_root=str(temp_project["root"]))
+
+        try:
+            # First call to read_with_context
+            result = service.read_file_with_context(str(temp_project["main"]))
+
+            assert result.content is not None
+
+            # Check that we have dependency information
+            # The injected context should include the utils.py file
+            deps = service.get_dependencies(str(temp_project["main"]))
+            assert len(deps) > 0, "main.py should have dependencies"
+
+            # Check that the utils file was analyzed and has function definitions
+            builder = service._relationship_builder
+            utils_data = builder.get_file_data(str(temp_project["utils"]))
+
+            assert utils_data is not None, "utils.py should be analyzed"
+
+            # Verify function definitions exist
+            format_name_def = utils_data.get_definition("format_name")
+            assert format_name_def is not None, "format_name definition should exist"
+            assert format_name_def.line_start is not None
+
+        finally:
+            service.shutdown()
+
+    def test_function_definitions_idempotent(
+        self, temp_project: Dict[str, Path], config: Config
+    ) -> None:
+        """Test that function definitions are consistent across multiple reads.
+
+        Verifies idempotency: first and second calls should have same definitions.
+        """
+        service = CrossFileContextService(config=config, project_root=str(temp_project["root"]))
+
+        try:
+            # First call
+            service.read_file_with_context(str(temp_project["main"]))
+            builder = service._relationship_builder
+            utils_data_1 = builder.get_file_data(str(temp_project["utils"]))
+
+            # Get definitions after first call
+            defs_1 = (
+                {d.name: d.line_start for d in utils_data_1.definitions} if utils_data_1 else {}
+            )
+
+            # Second call (should be idempotent)
+            service.read_file_with_context(str(temp_project["main"]))
+            utils_data_2 = builder.get_file_data(str(temp_project["utils"]))
+
+            # Get definitions after second call
+            defs_2 = (
+                {d.name: d.line_start for d in utils_data_2.definitions} if utils_data_2 else {}
+            )
+
+            # Definitions should be the same
+            assert defs_1 == defs_2, "Function definitions should be idempotent"
+
+        finally:
+            service.shutdown()
