@@ -31,6 +31,7 @@ from xfile_context.detectors import (
     DynamicDispatchDetector,
     ExecEvalDetector,
     FunctionCallDetector,
+    FunctionDefinitionDetector,
     ImportDetector,
     MetaclassDetector,
     MonkeyPatchingDetector,
@@ -187,6 +188,7 @@ class CrossFileContextService:
         self._detector_registry.register(ConditionalImportDetector())
         self._detector_registry.register(WildcardImportDetector())
         self._detector_registry.register(FunctionCallDetector())
+        self._detector_registry.register(FunctionDefinitionDetector())
         self._detector_registry.register(ClassInheritanceDetector())
 
         # Register dynamic pattern detectors (TDD Section 3.5.4, Section 3.9.1)
