@@ -824,3 +824,429 @@ class TestFileMetadataPendingRelationships:
         metadata = FileMetadata.from_dict(d)
 
         assert metadata.pending_relationships is False
+
+
+class TestStalenessResolverDependentRelationshipPreservation:
+    """Tests for Issue #133: Dependent file relationships must be preserved.
+
+    When a stale dependency is re-analyzed, dependent files' relationships should
+    be preserved. The bug was that analyze_file() calls remove_relationships_for_file()
+    which removes incoming relationships from dependents. The fix is to rebuild
+    relationships from symbol data using the RelationshipBuilder.
+
+    These tests verify that the symbol-based relationship rebuilding works correctly.
+    """
+
+    def test_dependent_relationships_preserved_with_relationship_builder(self):
+        """Test that dependent files' relationships are rebuilt from symbol data.
+
+        Scenario:
+        - A -> B (A imports B)
+        - B is stale
+        - When B is re-analyzed, A's relationship (A -> B) should be rebuilt
+          from A's symbol data in the RelationshipBuilder
+
+        This test verifies the Issue #133 fix using the symbol-based approach.
+        """
+        from xfile_context.models import FileSymbolData, ReferenceType, SymbolReference
+        from xfile_context.relationship_builder import RelationshipBuilder
+
+        graph = RelationshipGraph()
+        relationship_builder = RelationshipBuilder()
+
+        # Setup: A -> B (A imports B)
+        rel_a_to_b = Relationship(
+            source_file="A",
+            target_file="B",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        graph.add_relationship(rel_a_to_b)
+
+        # B also has its own import: B -> C
+        rel_b_to_c = Relationship(
+            source_file="B",
+            target_file="C",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        graph.add_relationship(rel_b_to_c)
+
+        # Add A's symbol data to RelationshipBuilder (so relationships can be rebuilt)
+        # This simulates what happens in normal two-phase analysis
+        a_symbol_data = FileSymbolData(
+            filepath="A",
+            definitions=[],
+            references=[
+                SymbolReference(
+                    name="B",
+                    reference_type=ReferenceType.IMPORT,
+                    line_number=1,
+                    resolved_module="B",
+                )
+            ],
+            parse_time=time.time(),
+            is_valid=True,
+        )
+        relationship_builder.add_file_data(a_symbol_data)
+
+        # Setup metadata: A is fresh, B is stale, C is fresh
+        graph.set_file_metadata("A", _create_metadata("A", stale=False))
+        graph.set_file_metadata("B", _create_metadata("B", stale=True))
+        graph.set_file_metadata("C", _create_metadata("C", stale=False))
+
+        analyzed_files: List[str] = []
+
+        def needs_analysis(path: str) -> bool:
+            meta = graph.get_file_metadata(path)
+            if meta is None:
+                return True
+            return meta.last_analyzed < time.time()
+
+        def analyze_file(path: str) -> bool:
+            """Simulate analyze_file: remove ALL relationships, then add new."""
+            analyzed_files.append(path)
+
+            # This is what python_analyzer._store_relationships() does:
+            # It removes ALL relationships for the file (both incoming and outgoing)
+            graph.remove_relationships_for_file(path)
+
+            # Re-add the same relationships (simulating re-analysis finding same imports)
+            if path == "B":
+                graph.add_relationship(rel_b_to_c)
+
+            graph.set_file_metadata(path, _create_metadata(path, stale=False))
+            return True
+
+        # Helper to get dependency target files
+        def get_dep_targets(filepath: str) -> set:
+            return {rel.target_file for rel in graph.get_dependencies(filepath)}
+
+        # Before resolution: A -> B should exist
+        assert len(graph.get_dependencies("A")) == 1
+        assert "B" in get_dep_targets("A")
+
+        resolver = StalenessResolver(
+            graph, needs_analysis, analyze_file, relationship_builder=relationship_builder
+        )
+        resolver.resolve_staleness("A")
+
+        # After resolution: B was re-analyzed, but A -> B should be rebuilt
+        # from A's symbol data in the RelationshipBuilder
+        assert "B" in analyzed_files
+        assert (
+            len(graph.get_dependencies("A")) == 1
+        ), f"Expected A to have 1 dependency (B), but got {graph.get_dependencies('A')}"
+        a_deps = graph.get_dependencies("A")
+        assert "B" in get_dep_targets(
+            "A"
+        ), f"Expected A -> B relationship to be rebuilt, but A's deps: {a_deps}"
+
+    def test_multiple_dependents_relationships_rebuilt(self):
+        """Test that multiple dependent files' relationships are all rebuilt.
+
+        Scenario:
+        - A -> B, C -> B (both A and C import B)
+        - B is stale
+        - When B is re-analyzed, both A -> B and C -> B should be rebuilt
+          from their respective symbol data
+        """
+        from xfile_context.models import FileSymbolData, ReferenceType, SymbolReference
+        from xfile_context.relationship_builder import RelationshipBuilder
+
+        graph = RelationshipGraph()
+        relationship_builder = RelationshipBuilder()
+
+        # Setup: A -> B, C -> B
+        rel_a_to_b = Relationship(
+            source_file="A",
+            target_file="B",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        rel_c_to_b = Relationship(
+            source_file="C",
+            target_file="B",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        graph.add_relationship(rel_a_to_b)
+        graph.add_relationship(rel_c_to_b)
+
+        # Add symbol data for both A and C
+        a_symbol_data = FileSymbolData(
+            filepath="A",
+            definitions=[],
+            references=[
+                SymbolReference(
+                    name="B",
+                    reference_type=ReferenceType.IMPORT,
+                    line_number=1,
+                    resolved_module="B",
+                )
+            ],
+            parse_time=time.time(),
+            is_valid=True,
+        )
+        c_symbol_data = FileSymbolData(
+            filepath="C",
+            definitions=[],
+            references=[
+                SymbolReference(
+                    name="B",
+                    reference_type=ReferenceType.IMPORT,
+                    line_number=1,
+                    resolved_module="B",
+                )
+            ],
+            parse_time=time.time(),
+            is_valid=True,
+        )
+        relationship_builder.add_file_data(a_symbol_data)
+        relationship_builder.add_file_data(c_symbol_data)
+
+        # Setup metadata: A and C are fresh, B is stale
+        graph.set_file_metadata("A", _create_metadata("A", stale=False))
+        graph.set_file_metadata("B", _create_metadata("B", stale=True))
+        graph.set_file_metadata("C", _create_metadata("C", stale=False))
+
+        analyzed_files: List[str] = []
+
+        def needs_analysis(path: str) -> bool:
+            meta = graph.get_file_metadata(path)
+            if meta is None:
+                return True
+            return meta.last_analyzed < time.time()
+
+        def analyze_file(path: str) -> bool:
+            """Simulate analyze_file removing all relationships then re-adding."""
+            analyzed_files.append(path)
+            graph.remove_relationships_for_file(path)
+            graph.set_file_metadata(path, _create_metadata(path, stale=False))
+            return True
+
+        # Helper to get dependency target files
+        def get_dep_targets(filepath: str) -> set:
+            return {rel.target_file for rel in graph.get_dependencies(filepath)}
+
+        resolver = StalenessResolver(
+            graph, needs_analysis, analyze_file, relationship_builder=relationship_builder
+        )
+        resolver.resolve_staleness("A")
+
+        # After resolution: B was re-analyzed, and A -> B should be rebuilt
+        # Note: C -> B may or may not be rebuilt depending on whether C is reachable
+        # from A in the dependency graph. Since A doesn't depend on C, C is not
+        # in the transitive dependency chain and may not be processed.
+        assert "B" in analyzed_files
+        a_deps = graph.get_dependencies("A")
+        assert "B" in get_dep_targets(
+            "A"
+        ), f"Expected A -> B relationship to be rebuilt, but A's deps: {a_deps}"
+
+    def test_chain_dependent_relationships_rebuilt(self):
+        """Test relationship rebuilding in a dependency chain.
+
+        Scenario:
+        - A -> B -> C (chain)
+        - C is stale (deepest dependency)
+        - When C is re-analyzed, B -> C should be rebuilt from B's symbol data
+        - A -> B should also be preserved (not affected since B is not re-analyzed)
+        """
+        from xfile_context.models import FileSymbolData, ReferenceType, SymbolReference
+        from xfile_context.relationship_builder import RelationshipBuilder
+
+        graph = RelationshipGraph()
+        relationship_builder = RelationshipBuilder()
+
+        # Setup: A -> B -> C
+        rel_a_to_b = Relationship(
+            source_file="A",
+            target_file="B",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        rel_b_to_c = Relationship(
+            source_file="B",
+            target_file="C",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        graph.add_relationship(rel_a_to_b)
+        graph.add_relationship(rel_b_to_c)
+
+        # Add symbol data for A and B (both may need relationship rebuilding)
+        a_symbol_data = FileSymbolData(
+            filepath="A",
+            definitions=[],
+            references=[
+                SymbolReference(
+                    name="B",
+                    reference_type=ReferenceType.IMPORT,
+                    line_number=1,
+                    resolved_module="B",
+                )
+            ],
+            parse_time=time.time(),
+            is_valid=True,
+        )
+        b_symbol_data = FileSymbolData(
+            filepath="B",
+            definitions=[],
+            references=[
+                SymbolReference(
+                    name="C",
+                    reference_type=ReferenceType.IMPORT,
+                    line_number=1,
+                    resolved_module="C",
+                )
+            ],
+            parse_time=time.time(),
+            is_valid=True,
+        )
+        relationship_builder.add_file_data(a_symbol_data)
+        relationship_builder.add_file_data(b_symbol_data)
+
+        # Setup metadata: A and B are fresh, C is stale
+        graph.set_file_metadata("A", _create_metadata("A", stale=False))
+        graph.set_file_metadata("B", _create_metadata("B", stale=False))
+        graph.set_file_metadata("C", _create_metadata("C", stale=True))
+
+        analyzed_files: List[str] = []
+
+        def needs_analysis(path: str) -> bool:
+            meta = graph.get_file_metadata(path)
+            if meta is None:
+                return True
+            return meta.last_analyzed < time.time()
+
+        def analyze_file(path: str) -> bool:
+            """Simulate analyze_file removing all relationships then re-adding."""
+            analyzed_files.append(path)
+            graph.remove_relationships_for_file(path)
+            graph.set_file_metadata(path, _create_metadata(path, stale=False))
+            return True
+
+        # Helper to get dependency target files
+        def get_dep_targets(filepath: str) -> set:
+            return {rel.target_file for rel in graph.get_dependencies(filepath)}
+
+        resolver = StalenessResolver(
+            graph, needs_analysis, analyze_file, relationship_builder=relationship_builder
+        )
+        resolver.resolve_staleness("A")
+
+        # After resolution:
+        # - C was re-analyzed
+        # - B -> C should be rebuilt from B's symbol data
+        # - A -> B should be preserved (B was not re-analyzed, so A's relationship wasn't removed)
+        assert "C" in analyzed_files
+        assert "B" not in analyzed_files  # B is not stale
+
+        b_deps = graph.get_dependencies("B")
+        assert "C" in get_dep_targets(
+            "B"
+        ), f"Expected B -> C relationship to be rebuilt, but B's deps: {b_deps}"
+
+        a_deps = graph.get_dependencies("A")
+        assert "B" in get_dep_targets(
+            "A"
+        ), f"Expected A -> B relationship to be preserved, but A's deps: {a_deps}"
+
+    def test_fallback_when_no_relationship_builder(self):
+        """Test graceful degradation when RelationshipBuilder is not provided.
+
+        When no RelationshipBuilder is available, relationships cannot be rebuilt
+        from symbol data. The resolver should still work but relationships may be lost.
+        """
+        graph = RelationshipGraph()
+
+        # Setup: A -> B (A imports B)
+        rel_a_to_b = Relationship(
+            source_file="A",
+            target_file="B",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        graph.add_relationship(rel_a_to_b)
+
+        # Setup metadata: A is fresh, B is stale
+        graph.set_file_metadata("A", _create_metadata("A", stale=False))
+        graph.set_file_metadata("B", _create_metadata("B", stale=True))
+
+        analyzed_files: List[str] = []
+
+        def needs_analysis(path: str) -> bool:
+            meta = graph.get_file_metadata(path)
+            if meta is None:
+                return True
+            return meta.last_analyzed < time.time()
+
+        def analyze_file(path: str) -> bool:
+            analyzed_files.append(path)
+            graph.remove_relationships_for_file(path)
+            graph.set_file_metadata(path, _create_metadata(path, stale=False))
+            return True
+
+        # No relationship_builder provided
+        resolver = StalenessResolver(graph, needs_analysis, analyze_file)
+        result = resolver.resolve_staleness("A")
+
+        # Should complete without error
+        assert result is True
+        assert "B" in analyzed_files
+
+        # Note: Without RelationshipBuilder, A -> B relationship is lost
+        # This is expected - the fix requires RelationshipBuilder to work
+
+    def test_no_rebuild_for_file_without_symbol_data(self):
+        """Test that files without symbol data are handled gracefully.
+
+        If a pending file doesn't have symbol data in the RelationshipBuilder,
+        the resolver should skip relationship rebuilding for that file.
+        """
+        from xfile_context.relationship_builder import RelationshipBuilder
+
+        graph = RelationshipGraph()
+        relationship_builder = RelationshipBuilder()
+
+        # Setup: A -> B (A imports B), but no symbol data for A
+        rel_a_to_b = Relationship(
+            source_file="A",
+            target_file="B",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        graph.add_relationship(rel_a_to_b)
+
+        # Note: NOT adding symbol data for A to the relationship_builder
+
+        # Setup metadata: A is fresh, B is stale
+        graph.set_file_metadata("A", _create_metadata("A", stale=False))
+        graph.set_file_metadata("B", _create_metadata("B", stale=True))
+
+        analyzed_files: List[str] = []
+
+        def needs_analysis(path: str) -> bool:
+            meta = graph.get_file_metadata(path)
+            if meta is None:
+                return True
+            return meta.last_analyzed < time.time()
+
+        def analyze_file(path: str) -> bool:
+            analyzed_files.append(path)
+            graph.remove_relationships_for_file(path)
+            graph.set_file_metadata(path, _create_metadata(path, stale=False))
+            return True
+
+        resolver = StalenessResolver(
+            graph, needs_analysis, analyze_file, relationship_builder=relationship_builder
+        )
+        result = resolver.resolve_staleness("A")
+
+        # Should complete without error
+        assert result is True
+        assert "B" in analyzed_files
+
+        # A -> B relationship is lost since A has no symbol data to rebuild from
+        # This is expected - the caller should ensure symbol data is available

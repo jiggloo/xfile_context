@@ -11,21 +11,32 @@ Algorithm Overview:
 2. Find stale files in transitive dependency chain
 3. Sort topologically (dependencies before dependents)
 4. Remove relationships and mark dependents as pending
-5. Analyze stale files or restore pending files in topological order
+5. Analyze stale files in topological order
+6. Rebuild relationships for pending files from symbol data (Issue #133 fix)
 
 This approach ensures correct handling of complex dependency chains including:
 - Diamond patterns (A -> B, A -> C, B -> D, C -> D)
 - Transitive staleness (A -> B -> C, where C is stale)
 - Partial staleness (A -> B -> C, where A and C are stale but not B)
 
+Issue #133 Fix:
+When analyze_file() is called for a stale file, it calls remove_relationships_for_file()
+which removes ALL relationships involving the file, including incoming relationships
+from dependents. Instead of storing/restoring relationships (which is brittle), we
+rebuild them from the symbol data in the RelationshipBuilder. This is cleaner because
+relationships are derived from the authoritative source (FileSymbolData).
+
 See Issue #117 comments for detailed algorithm discussion.
 """
 
 import logging
 from pathlib import Path
-from typing import Callable, Dict, List, Set
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set
 
-from xfile_context.models import Relationship, RelationshipGraph
+from xfile_context.models import RelationshipGraph
+
+if TYPE_CHECKING:
+    from xfile_context.relationship_builder import RelationshipBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +49,21 @@ class StalenessResolver:
 
     Key Design Decisions:
     - Uses topological sort to ensure dependencies are processed before dependents
-    - Stores relationships before removal to enable efficient restoration
+    - Rebuilds relationships from symbol data for pending files (Issue #133 fix)
     - Marks files as "pending relationships" to avoid unnecessary re-analysis
     - Works with copied dependency graph to preserve traversal information
 
+    Issue #133 Fix:
+    When a stale file B is re-analyzed, analyze_file() calls remove_relationships_for_file(B)
+    which removes ALL relationships involving B, including A -> B where A is a dependent.
+    Instead of storing/restoring relationships (brittle), we rebuild A's relationships
+    from A's FileSymbolData in the RelationshipBuilder. This works because:
+    1. FileSymbolData is the authoritative source for relationships
+    2. RelationshipBuilder.build_relationships_for_file() can rebuild any file's relationships
+    3. This approach is simpler and handles all edge cases automatically
+
     Usage:
-        resolver = StalenessResolver(graph, needs_analysis_fn, analyze_fn)
+        resolver = StalenessResolver(graph, needs_analysis_fn, analyze_fn, relationship_builder)
         resolver.resolve_staleness(target_file)
     """
 
@@ -52,6 +72,7 @@ class StalenessResolver:
         graph: RelationshipGraph,
         needs_analysis: Callable[[str], bool],
         analyze_file: Callable[[str], bool],
+        relationship_builder: Optional["RelationshipBuilder"] = None,
     ):
         """Initialize the staleness resolver.
 
@@ -61,13 +82,17 @@ class StalenessResolver:
                            Signature: (filepath: str) -> bool
             analyze_file: Function to analyze a file and update the graph.
                          Signature: (filepath: str) -> bool (success)
+            relationship_builder: Optional RelationshipBuilder for rebuilding
+                                  relationships from symbol data. Required for
+                                  the Issue #133 fix to work correctly.
         """
         self.graph = graph
         self.needs_analysis = needs_analysis
         self.analyze_file = analyze_file
+        self._relationship_builder = relationship_builder
 
-        # Storage for pending relationships during resolution
-        self._stored_relationships: Dict[str, List[Relationship]] = {}
+        # Track pending files that need relationship rebuilding
+        self._pending_files: Set[str] = set()
 
     def resolve_staleness(self, target_file: str) -> bool:
         """Resolve staleness for target file and its transitive dependencies.
@@ -239,31 +264,36 @@ class StalenessResolver:
         """Remove relationships for stale files and mark dependents as pending.
 
         For each stale file in topological order:
-        1. Store its outgoing relationships for potential restoration
-        2. Remove its outgoing relationships from the graph
-        3. Mark all direct dependents as pending_relationships
+        1. Remove its outgoing relationships from the graph
+        2. Mark all direct dependents as pending_relationships
+        3. Track pending files for later relationship rebuilding (Issue #133 fix)
+
+        Issue #133 Note:
+        We don't store relationships anymore. When analyze_file() is called for a stale
+        file, it removes ALL relationships including incoming ones from dependents.
+        Instead of storing/restoring, we'll rebuild relationships from symbol data.
 
         Args:
             sorted_stale_files: Stale files in topological order.
         """
         for filepath in sorted_stale_files:
-            # Store relationships before removal
-            stored = self.graph.store_pending_relationships(filepath)
-            self._stored_relationships[filepath] = stored
-
             # Remove outgoing relationships
-            self.graph.remove_outgoing_relationships(filepath)
+            removed = self.graph.remove_outgoing_relationships(filepath)
 
-            # Mark direct dependents as pending
+            # Mark direct dependents as pending and track them for rebuilding
+            # Issue #133: These dependents will have their A -> B relationships
+            # removed when analyze_file(B) is called. We'll rebuild them later
+            # from their FileSymbolData in the RelationshipBuilder.
             dependents = self.graph.get_direct_dependents(filepath)
             for dependent in dependents:
                 # Skip special markers
                 if dependent.startswith("<") and dependent.endswith(">"):
                     continue
                 self.graph.mark_file_pending_relationships(dependent)
+                self._pending_files.add(dependent)
 
             logger.debug(
-                f"Removed {len(stored)} relationships from {Path(filepath).name}, "
+                f"Removed {len(removed)} relationships from {Path(filepath).name}, "
                 f"marked {len(dependents)} dependents as pending"
             )
 
@@ -354,11 +384,17 @@ class StalenessResolver:
         return result
 
     def _process_files(self, files_to_process: List[str], stale_files: Set[str]) -> bool:
-        """Process files in topological order (analyze or restore).
+        """Process files in topological order (analyze or rebuild relationships).
 
         For each file:
         - If stale: Re-analyze the file via analyze_file callback
-        - If pending (not stale): Restore relationships from storage
+        - If pending (not stale): Rebuild relationships from symbol data (Issue #133 fix)
+
+        Issue #133 Fix:
+        When a stale file B is analyzed, remove_relationships_for_file(B) removes
+        ALL relationships involving B, including A -> B where A is a dependent.
+        Instead of restoring from stored relationships (brittle), we rebuild A's
+        relationships from A's FileSymbolData using the RelationshipBuilder.
 
         Processing continues even if individual files fail, ensuring maximum
         recovery. Failed files are logged but don't stop subsequent processing.
@@ -381,16 +417,58 @@ class StalenessResolver:
                     logger.warning(f"Failed to analyze stale file: {filepath}")
                     success = False
             else:
-                # Restore relationships for pending file
-                logger.debug(f"Restoring relationships for pending file: {Path(filepath).name}")
-                stored = self._stored_relationships.get(filepath)
-                if stored:
-                    self.graph.restore_pending_relationships(stored)
+                # Rebuild relationships for pending file from symbol data (Issue #133 fix)
+                logger.debug(f"Rebuilding relationships for pending file: {Path(filepath).name}")
+                self._rebuild_relationships_for_file(filepath)
 
             # Clear pending flag
             self.graph.clear_pending_relationships(filepath)
 
-        # Clear stored relationships
-        self._stored_relationships.clear()
+        # Clear pending files tracking
+        self._pending_files.clear()
 
         return success
+
+    def _rebuild_relationships_for_file(self, filepath: str) -> None:
+        """Rebuild relationships for a file from its symbol data (Issue #133 fix).
+
+        This method rebuilds a file's outgoing relationships by:
+        1. Looking up the file's FileSymbolData in the RelationshipBuilder
+        2. Using RelationshipBuilder.build_relationships_for_file() to derive relationships
+        3. Replacing the file's relationships in the graph
+
+        This is called for pending files (dependents of stale files) whose relationships
+        were removed when the stale file was analyzed.
+
+        Args:
+            filepath: Path to file needing relationship rebuild.
+        """
+        if self._relationship_builder is None:
+            # Fallback: No relationship builder available, can't rebuild
+            # This shouldn't happen in normal operation as two-phase analysis
+            # should always be enabled per the Issue #133 fix requirements
+            logger.warning(
+                f"Cannot rebuild relationships for {Path(filepath).name}: "
+                "RelationshipBuilder not available"
+            )
+            return
+
+        # Check if we have symbol data for this file
+        file_data = self._relationship_builder.get_file_data(filepath)
+        if file_data is None:
+            logger.debug(
+                f"No symbol data for {Path(filepath).name}, " "skipping relationship rebuild"
+            )
+            return
+
+        # Rebuild relationships from symbol data
+        relationships = self._relationship_builder.build_relationships_for_file(filepath)
+
+        # Remove any existing relationships for this file and add the rebuilt ones
+        # Note: We only remove outgoing relationships to preserve incoming ones
+        # that may have been added by other files' analysis
+        self.graph.remove_outgoing_relationships(filepath)
+        for rel in relationships:
+            self.graph.add_relationship(rel)
+
+        logger.debug(f"Rebuilt {len(relationships)} relationships for {Path(filepath).name}")

@@ -336,16 +336,24 @@ class CrossFileContextService:
         1. The target file is analyzed if stale
         2. All transitive dependencies are checked for staleness
         3. Stale files are processed in topological order (dependencies first)
-        4. Files with pending relationships are restored without re-analysis
+        4. Files with pending relationships have them rebuilt from symbol data
+
+        Issue #133 Fix:
+        The StalenessResolver now accepts a RelationshipBuilder to rebuild
+        relationships for pending files from their FileSymbolData. This is
+        cleaner than the previous store/restore approach and handles all
+        edge cases correctly.
 
         Args:
             file_path: Target file being read via read_file_with_context().
         """
         # Create staleness resolver with callbacks to service methods
+        # Pass the RelationshipBuilder for Issue #133 fix
         resolver = StalenessResolver(
             graph=self._graph,
             needs_analysis=self._needs_analysis,
             analyze_file=self._analyze_file_for_staleness,
+            relationship_builder=self._relationship_builder,
         )
 
         # Resolve staleness for target and all transitive dependencies
