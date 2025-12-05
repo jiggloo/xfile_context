@@ -709,6 +709,70 @@ class TestRelationshipGraph:
         assert "src/main.py" in source_files
         assert "src/other.py" in source_files
 
+    def test_get_dependencies_deduplicates_with_none_fields(self):
+        """Test deduplication handles None values in optional fields correctly (Issue #144)."""
+        graph = RelationshipGraph()
+
+        # Duplicate relationships with None values in optional fields
+        rel1 = Relationship(
+            source_file="src/main.py",
+            target_file="src/models.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+            source_symbol=None,
+            target_symbol=None,
+            target_line=None,
+        )
+        rel2 = Relationship(
+            source_file="src/main.py",
+            target_file="src/models.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+            source_symbol=None,
+            target_symbol=None,
+            target_line=None,
+        )
+
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+
+        dependencies = graph.get_dependencies("src/main.py")
+
+        # Should deduplicate to 1 relationship
+        assert len(dependencies) == 1
+
+    def test_get_dependencies_different_source_symbols_not_duplicates(self):
+        """Test relationships with different source_symbols are kept separate (Issue #144)."""
+        graph = RelationshipGraph()
+
+        # Two relationships that differ only in source_symbol
+        rel1 = Relationship(
+            source_file="src/main.py",
+            target_file="src/models.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+            source_symbol="ClassA",
+            target_symbol="MyClass",
+            target_line=50,
+        )
+        rel2 = Relationship(
+            source_file="src/main.py",
+            target_file="src/models.py",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=10,
+            source_symbol="ClassB",
+            target_symbol="MyClass",
+            target_line=50,
+        )
+
+        graph.add_relationship(rel1)
+        graph.add_relationship(rel2)
+
+        dependencies = graph.get_dependencies("src/main.py")
+
+        # Should keep both since source_symbol differs
+        assert len(dependencies) == 2
+
     def test_validate_graph_detects_index_inconsistency(self):
         """Test validation detects bidirectional index inconsistencies (EC-19)."""
         graph = RelationshipGraph()
