@@ -1160,10 +1160,11 @@ class CrossFileContextService:
         context_parts.append("")
 
         # Deduplicate relationships for recent definitions section (Issue #144)
+        # This is assembly-level deduplication (complements graph-level deduplication in PR #145).
         # Key: (target_file, target_line, source_file, relationship_type)
         # Excludes usage line number because a single function definition
         # is sufficient for all usages in the file for now.
-        seen_definitions: Set[Tuple[str, Optional[int], str, Any]] = set()
+        seen_dedup_keys: Set[Tuple[str, Optional[int], str, str]] = set()
         deduplicated_rels: List[Relationship] = []
         for rel in prioritized:
             dedup_key = (
@@ -1172,8 +1173,8 @@ class CrossFileContextService:
                 rel.source_file,
                 rel.relationship_type,
             )
-            if dedup_key not in seen_definitions:
-                seen_definitions.add(dedup_key)
+            if dedup_key not in seen_dedup_keys:
+                seen_dedup_keys.add(dedup_key)
                 deduplicated_rels.append(rel)
 
         snippets_added = 0
