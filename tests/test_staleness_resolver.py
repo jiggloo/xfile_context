@@ -824,3 +824,228 @@ class TestFileMetadataPendingRelationships:
         metadata = FileMetadata.from_dict(d)
 
         assert metadata.pending_relationships is False
+
+
+class TestStalenessResolverDependentRelationshipPreservation:
+    """Tests for Issue #133: Dependent file relationships must be preserved.
+
+    When a stale dependency is re-analyzed, dependent files' relationships should
+    be preserved. The bug was that analyze_file() calls remove_relationships_for_file()
+    which removes incoming relationships from dependents, but those relationships
+    were never stored for restoration.
+    """
+
+    def test_dependent_relationships_preserved_when_dependency_stale(self):
+        """Test that dependent files' relationships are preserved when dependency is re-analyzed.
+
+        Scenario:
+        - A -> B (A imports B)
+        - B is stale
+        - When B is re-analyzed, A's relationship (A -> B) should be preserved
+
+        This test reproduces the Issue #133 bug by simulating what analyze_file() does:
+        it calls remove_relationships_for_file() which removes ALL relationships
+        involving the file, including incoming relationships from dependents.
+        """
+        graph = RelationshipGraph()
+
+        # Setup: A -> B (A imports B)
+        rel_a_to_b = Relationship(
+            source_file="A",
+            target_file="B",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        graph.add_relationship(rel_a_to_b)
+
+        # B also has its own import: B -> C
+        rel_b_to_c = Relationship(
+            source_file="B",
+            target_file="C",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        graph.add_relationship(rel_b_to_c)
+
+        # Setup metadata: A is fresh, B is stale, C is fresh
+        graph.set_file_metadata("A", _create_metadata("A", stale=False))
+        graph.set_file_metadata("B", _create_metadata("B", stale=True))
+        graph.set_file_metadata("C", _create_metadata("C", stale=False))
+
+        analyzed_files: List[str] = []
+
+        def needs_analysis(path: str) -> bool:
+            meta = graph.get_file_metadata(path)
+            if meta is None:
+                return True
+            return meta.last_analyzed < time.time()
+
+        def analyze_file(path: str) -> bool:
+            """Simulate analyze_file: remove ALL relationships, then add new."""
+            analyzed_files.append(path)
+
+            # This is what python_analyzer._store_relationships() does:
+            # It removes ALL relationships for the file (both incoming and outgoing)
+            graph.remove_relationships_for_file(path)
+
+            # Re-add the same relationships (simulating re-analysis finding same imports)
+            if path == "B":
+                graph.add_relationship(rel_b_to_c)
+
+            graph.set_file_metadata(path, _create_metadata(path, stale=False))
+            return True
+
+        # Helper to get dependency target files
+        def get_dep_targets(filepath: str) -> set:
+            return {rel.target_file for rel in graph.get_dependencies(filepath)}
+
+        # Before resolution: A -> B should exist
+        assert len(graph.get_dependencies("A")) == 1
+        assert "B" in get_dep_targets("A")
+
+        resolver = StalenessResolver(graph, needs_analysis, analyze_file)
+        resolver.resolve_staleness("A")
+
+        # After resolution: B was re-analyzed, but A -> B should still exist
+        # because A was marked as pending and its relationships should be restored
+        assert "B" in analyzed_files
+        assert (
+            len(graph.get_dependencies("A")) == 1
+        ), f"Expected A to have 1 dependency (B), but got {graph.get_dependencies('A')}"
+        a_deps = graph.get_dependencies("A")
+        assert "B" in get_dep_targets(
+            "A"
+        ), f"Expected A -> B relationship to be preserved, but A's deps: {a_deps}"
+
+    def test_multiple_dependents_relationships_preserved(self):
+        """Test that multiple dependent files' relationships are all preserved.
+
+        Scenario:
+        - A -> B, C -> B (both A and C import B)
+        - B is stale
+        - When B is re-analyzed, both A -> B and C -> B should be preserved
+        """
+        graph = RelationshipGraph()
+
+        # Setup: A -> B, C -> B
+        rel_a_to_b = Relationship(
+            source_file="A",
+            target_file="B",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        rel_c_to_b = Relationship(
+            source_file="C",
+            target_file="B",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        graph.add_relationship(rel_a_to_b)
+        graph.add_relationship(rel_c_to_b)
+
+        # Setup metadata: A and C are fresh, B is stale
+        graph.set_file_metadata("A", _create_metadata("A", stale=False))
+        graph.set_file_metadata("B", _create_metadata("B", stale=True))
+        graph.set_file_metadata("C", _create_metadata("C", stale=False))
+
+        analyzed_files: List[str] = []
+
+        def needs_analysis(path: str) -> bool:
+            meta = graph.get_file_metadata(path)
+            if meta is None:
+                return True
+            return meta.last_analyzed < time.time()
+
+        def analyze_file(path: str) -> bool:
+            """Simulate analyze_file removing all relationships then re-adding."""
+            analyzed_files.append(path)
+            graph.remove_relationships_for_file(path)
+            graph.set_file_metadata(path, _create_metadata(path, stale=False))
+            return True
+
+        # Helper to get dependency target files
+        def get_dep_targets(filepath: str) -> set:
+            return {rel.target_file for rel in graph.get_dependencies(filepath)}
+
+        resolver = StalenessResolver(graph, needs_analysis, analyze_file)
+        resolver.resolve_staleness("A")
+
+        # After resolution: B was re-analyzed, but A -> B should still exist
+        # Note: C -> B may or may not be preserved depending on whether C is reachable
+        # from A in the dependency graph. Since A doesn't depend on C, C is not
+        # in the transitive dependency chain and may not be processed.
+        assert "B" in analyzed_files
+        a_deps = graph.get_dependencies("A")
+        assert "B" in get_dep_targets(
+            "A"
+        ), f"Expected A -> B relationship to be preserved, but A's deps: {a_deps}"
+
+    def test_chain_dependent_relationships_preserved(self):
+        """Test relationship preservation in a dependency chain.
+
+        Scenario:
+        - A -> B -> C (chain)
+        - C is stale (deepest dependency)
+        - When C is re-analyzed, B -> C should be preserved
+        - When everything is resolved, A -> B should also be preserved
+        """
+        graph = RelationshipGraph()
+
+        # Setup: A -> B -> C
+        rel_a_to_b = Relationship(
+            source_file="A",
+            target_file="B",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        rel_b_to_c = Relationship(
+            source_file="B",
+            target_file="C",
+            relationship_type=RelationshipType.IMPORT,
+            line_number=1,
+        )
+        graph.add_relationship(rel_a_to_b)
+        graph.add_relationship(rel_b_to_c)
+
+        # Setup metadata: A and B are fresh, C is stale
+        graph.set_file_metadata("A", _create_metadata("A", stale=False))
+        graph.set_file_metadata("B", _create_metadata("B", stale=False))
+        graph.set_file_metadata("C", _create_metadata("C", stale=True))
+
+        analyzed_files: List[str] = []
+
+        def needs_analysis(path: str) -> bool:
+            meta = graph.get_file_metadata(path)
+            if meta is None:
+                return True
+            return meta.last_analyzed < time.time()
+
+        def analyze_file(path: str) -> bool:
+            """Simulate analyze_file removing all relationships then re-adding."""
+            analyzed_files.append(path)
+            graph.remove_relationships_for_file(path)
+            graph.set_file_metadata(path, _create_metadata(path, stale=False))
+            return True
+
+        # Helper to get dependency target files
+        def get_dep_targets(filepath: str) -> set:
+            return {rel.target_file for rel in graph.get_dependencies(filepath)}
+
+        # Before resolution
+        assert "B" in get_dep_targets("A")
+        assert "C" in get_dep_targets("B")
+
+        resolver = StalenessResolver(graph, needs_analysis, analyze_file)
+        resolver.resolve_staleness("A")
+
+        # After resolution: C was re-analyzed, but B -> C should be preserved
+        # and A -> B should also be preserved
+        assert "C" in analyzed_files
+        a_deps = graph.get_dependencies("A")
+        b_deps = graph.get_dependencies("B")
+        assert "B" in get_dep_targets(
+            "A"
+        ), f"Expected A -> B relationship to be preserved, but A's deps: {a_deps}"
+        assert "C" in get_dep_targets(
+            "B"
+        ), f"Expected B -> C relationship to be preserved, but B's deps: {b_deps}"

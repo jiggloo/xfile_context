@@ -242,6 +242,12 @@ class StalenessResolver:
         1. Store its outgoing relationships for potential restoration
         2. Remove its outgoing relationships from the graph
         3. Mark all direct dependents as pending_relationships
+        4. Store dependents' outgoing relationships for restoration (Issue #133 fix)
+
+        The Issue #133 fix ensures that when analyze_file() is called for a stale file,
+        which calls remove_relationships_for_file() to remove ALL relationships
+        (including incoming relationships from dependents), the dependent files'
+        relationships can be restored.
 
         Args:
             sorted_stale_files: Stale files in topological order.
@@ -254,13 +260,25 @@ class StalenessResolver:
             # Remove outgoing relationships
             self.graph.remove_outgoing_relationships(filepath)
 
-            # Mark direct dependents as pending
+            # Mark direct dependents as pending and store their relationships
+            # Issue #133: When analyze_file() is called for the stale file, it calls
+            # remove_relationships_for_file() which removes ALL relationships
+            # involving the stale file, including incoming relationships from dependents.
+            # We need to store the dependent files' outgoing relationships before
+            # the stale file is analyzed, so they can be restored afterward.
             dependents = self.graph.get_direct_dependents(filepath)
             for dependent in dependents:
                 # Skip special markers
                 if dependent.startswith("<") and dependent.endswith(">"):
                     continue
                 self.graph.mark_file_pending_relationships(dependent)
+
+                # Store dependent's outgoing relationships if not already stored
+                # This ensures the dependent -> stale_file relationship is preserved
+                # when analyze_file() removes all relationships for the stale file
+                if dependent not in self._stored_relationships:
+                    dependent_stored = self.graph.store_pending_relationships(dependent)
+                    self._stored_relationships[dependent] = dependent_stored
 
             logger.debug(
                 f"Removed {len(stored)} relationships from {Path(filepath).name}, "
