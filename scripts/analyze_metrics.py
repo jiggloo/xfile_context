@@ -14,7 +14,7 @@ Features:
 - Human-readable report output
 
 Usage:
-    python scripts/analyze_metrics.py .cross_file_context_logs/session_metrics.jsonl
+    python scripts/analyze_metrics.py .xfile_context/session_metrics.jsonl
     python scripts/analyze_metrics.py path/to/metrics1.jsonl path/to/metrics2.jsonl
 
 Related Requirements:
@@ -332,7 +332,7 @@ def identify_outliers(sessions: List[Dict[str, Any]], stats: AggregateStatistics
     # Also check for files with excessive re-reads
     for re_read in stats.files_with_re_reads:
         if re_read["read_count"] > 10:
-            file_name = Path(re_read["file"]).name if "/" in re_read["file"] else re_read["file"]
+            file_name = Path(re_read["file"]).name
             outliers.append(f"File {file_name}: Excessive re-reads ({re_read['read_count']})")
 
     return outliers
@@ -610,11 +610,13 @@ def format_report(report: AnalysisReport) -> str:
             )
             lines.append(f"  Files with most warnings: {files_str}")
 
-        # Check for refactoring suggestions
-        highest_file = stats.files_with_most_warnings[0] if stats.files_with_most_warnings else None
-        if highest_file and highest_file["warning_count"] > 10:
-            file_name = Path(highest_file["file"]).name
-            lines.append(f"  -> RECOMMENDATION: Review {file_name} for refactoring opportunities")
+            # Check for refactoring suggestions
+            highest_file = stats.files_with_most_warnings[0]
+            if highest_file["warning_count"] > 10:
+                file_name = Path(highest_file["file"]).name
+                lines.append(
+                    f"  -> RECOMMENDATION: Review {file_name} for refactoring opportunities"
+                )
     else:
         lines.append("  No warnings recorded")
     lines.append("")
@@ -652,7 +654,7 @@ def format_report(report: AnalysisReport) -> str:
     if stats.files_with_re_reads:
         lines.append("Re-read Patterns:")
         for pattern in stats.files_with_re_reads[:5]:
-            file_name = Path(pattern["file"]).name if "/" in pattern["file"] else pattern["file"]
+            file_name = Path(pattern["file"]).name
             lines.append(f"  {file_name}: {pattern['read_count']} reads")
         lines.append("")
 
