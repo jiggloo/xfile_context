@@ -2099,6 +2099,7 @@ class TestDependencySummaryLineNumbers:
             service.shutdown()
 
 
+@pytest.mark.slow
 class TestDeterministicOutput:
     """Tests that context output is deterministic/idempotent (Issue #131).
 
@@ -2323,6 +2324,7 @@ class TestDeterministicOutput:
             service.shutdown()
 
 
+@pytest.mark.slow
 class TestFirstCallCompleteSymbols:
     """Tests that the first read_with_context() call has complete symbol information (Issue #138).
 
@@ -2494,6 +2496,7 @@ helper_two()
             service.shutdown()
 
 
+@pytest.mark.slow
 class TestRecentDefinitionsDeduplication:
     """Tests for deduplication in 'recent definitions' section (Issue #144).
 
