@@ -379,6 +379,32 @@ After a session, review the metrics file for insights:
 - Warning counts by type
 - Files with most dependencies
 
+#### Analyze Metrics with the Analysis Tool
+
+Use the built-in analysis tool to process session metrics and get configuration recommendations:
+
+```bash
+python scripts/analyze_metrics.py .cross_file_context_logs/session_metrics.jsonl
+```
+
+The tool produces a human-readable report including:
+- **Cache Performance**: Hit rates, peak size, eviction patterns
+- **Context Injection**: Token count statistics and threshold exceedances
+- **Performance**: Parsing and injection latency vs. targets (<200ms, <50ms)
+- **Warnings**: Most common warning types and files with most warnings
+- **Recommendations**: Suggested configuration changes based on data patterns
+- **Outliers**: Sessions or files with unusual metrics
+
+For JSON output (programmatic use):
+```bash
+python scripts/analyze_metrics.py --json .cross_file_context_logs/session_metrics.jsonl
+```
+
+Multiple metric files can be analyzed together:
+```bash
+python scripts/analyze_metrics.py metrics1.jsonl metrics2.jsonl
+```
+
 #### Validate Configuration
 
 Ensure `.cross_file_context_links.yml` is valid YAML:
