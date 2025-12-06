@@ -4,6 +4,9 @@
 """
 Functional Tests for Session Metrics and Data Collection (Test Category 10).
 
+NOTE: Marked as slow tests - these analyze a full test codebase.
+Run with: pytest -m slow
+
 This module validates that session metrics emission and format works correctly
 according to T-10.1 through T-10.7 from prd_testing.md Section 8.4.
 
@@ -46,6 +49,9 @@ from xfile_context.metrics_collector import (
 )
 from xfile_context.models import RelationshipGraph
 from xfile_context.warning_logger import WarningLogger
+
+# Mark entire module as slow - these tests analyze a full codebase
+pytestmark = pytest.mark.slow
 
 # Path to the functional test codebase
 TEST_CODEBASE_PATH = Path(__file__).parent / "test_codebase"

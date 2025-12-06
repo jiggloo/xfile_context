@@ -3,6 +3,9 @@
 
 """Integration tests for MCP Server + Service.
 
+NOTE: Marked as slow tests - integration tests create full project structures.
+Run with: pytest -m slow
+
 Tests tool invocations produce correct responses per TDD Section 3.13.2.
 Also covers T-9.1 through T-9.6 (Claude Code integration tests).
 """
@@ -15,6 +18,9 @@ import yaml
 from xfile_context.config import Config
 from xfile_context.mcp_server import CrossFileContextMCPServer
 from xfile_context.service import CrossFileContextService
+
+# Mark entire module as slow - integration tests create full project structures
+pytestmark = pytest.mark.slow
 
 
 def create_config_file(project_path: Path, **kwargs) -> Path:

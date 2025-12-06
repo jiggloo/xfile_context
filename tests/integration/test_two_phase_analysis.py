@@ -3,6 +3,9 @@
 
 """Integration tests for two-phase analysis pipeline (Issue #125).
 
+NOTE: Marked as slow tests - integration tests create full project structures.
+Run with: pytest -m slow
+
 Tests the full two-phase analysis flow:
 Phase 1: AST -> FileSymbolData (via detectors)
 Phase 2: FileSymbolData -> Relationships (via RelationshipBuilder)
@@ -24,6 +27,9 @@ from xfile_context.detectors.registry import DetectorRegistry
 from xfile_context.models import RelationshipGraph, RelationshipType
 from xfile_context.relationship_builder import RelationshipBuilder
 from xfile_context.service import CrossFileContextService
+
+# Mark entire module as slow - integration tests create full project structures
+pytestmark = pytest.mark.slow
 
 
 class TestTwoPhaseAnalyzerIntegration:

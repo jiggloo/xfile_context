@@ -4,6 +4,9 @@
 """
 Functional Tests for Cross-File Awareness and Graph Management (Test Category 4).
 
+NOTE: Marked as slow tests - these analyze a full test codebase and take 5-22 seconds per test.
+Run with: pytest -m slow
+
 This module validates that cross-file awareness and graph management features
 work correctly according to T-4.1 through T-4.8 from prd_testing.md Section 8.2.
 
@@ -31,6 +34,9 @@ from xfile_context.config import Config
 from xfile_context.models import RelationshipType
 from xfile_context.query_api import QueryAPI
 from xfile_context.service import CrossFileContextService
+
+# Mark entire module as slow - these tests analyze a full codebase
+pytestmark = pytest.mark.slow
 
 # Path to the functional test codebase
 TEST_CODEBASE_PATH = Path(__file__).parent / "test_codebase"
