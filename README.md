@@ -52,6 +52,30 @@ To bypass hooks for a specific commit (not recommended):
 git commit --no-verify
 ```
 
+### Running Tests
+
+Tests are split into two categories for optimal development workflow:
+
+**Fast unit tests** (runs in pre-commit, ~1.2 minutes):
+```bash
+pytest -m "not slow"
+```
+
+**Full test suite** (includes functional/integration tests, ~5.5 minutes):
+```bash
+pytest
+```
+
+**Only slow tests** (functional and integration tests):
+```bash
+pytest -m slow
+```
+
+**Parallel execution** (faster):
+```bash
+pytest -n 2 --dist=loadfile -m "not slow"
+```
+
 ### GitHub Actions
 
 This project uses GitHub Actions for continuous integration. The following workflows run automatically on pull requests:
