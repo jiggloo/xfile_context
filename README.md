@@ -121,7 +121,7 @@ Once started, open http://localhost:6274 in your browser to access the inspector
 - Invoke tools interactively with custom arguments
 - Inspect tool responses
 
-**Note**: The `mcp dev` command may create a `uv.lock` file. This file is ignored by version control and can be safely deleted.
+**Note**: The `mcp dev` command uses the `uv.lock` file for dependency management. This file is tracked in version control to ensure consistent development environments.
 
 #### Programmatic Usage
 
