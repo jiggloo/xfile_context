@@ -4,7 +4,7 @@
 """
 Functional Tests for Dynamic Python Handling and Warnings (Test Category 6).
 
-NOTE: Marked as slow tests - functional tests require complex setup.
+NOTE: Marked as slow tests - these analyze a full test codebase.
 Run with: pytest -m slow
 
 This module validates that dynamic pattern detection and warning system works correctly
@@ -60,7 +60,7 @@ from xfile_context.warning_formatter import StructuredWarning, WarningEmitter, W
 from xfile_context.warning_logger import WarningLogger, read_warnings_from_log
 from xfile_context.warning_suppression import WarningSuppressionManager
 
-# Mark entire module as slow - functional tests require complex setup
+# Mark entire module as slow - these tests analyze a full codebase
 pytestmark = pytest.mark.slow
 
 # Path to the functional test codebase
