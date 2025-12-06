@@ -4,6 +4,9 @@
 """
 Functional Tests for Working Memory Cache (Test Category 3).
 
+NOTE: Marked as slow tests - these analyze a full test codebase and take 5-10 seconds per test.
+Run with: pytest -m slow
+
 This module validates that working memory cache behavior works correctly
 according to T-3.1 through T-3.5 from prd_testing.md Section 8.2.
 
@@ -31,6 +34,9 @@ import pytest
 from xfile_context.cache import WorkingMemoryCache
 from xfile_context.config import Config
 from xfile_context.service import CrossFileContextService
+
+# Mark entire module as slow - these tests analyze a full codebase
+pytestmark = pytest.mark.slow
 
 # Path to the functional test codebase
 TEST_CODEBASE_PATH = Path(__file__).parent / "test_codebase"

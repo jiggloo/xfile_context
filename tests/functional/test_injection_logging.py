@@ -4,6 +4,9 @@
 """
 Functional Tests for Context Injection Logging (Test Category 5).
 
+NOTE: Marked as slow tests - these analyze a full test codebase and take 5-10 seconds per test.
+Run with: pytest -m slow
+
 This module validates that context injection logging behavior works correctly
 according to T-5.1 through T-5.7 from prd_testing.md Section 8.2.
 
@@ -43,6 +46,9 @@ from xfile_context.injection_logger import (
     read_injections_from_log,
 )
 from xfile_context.service import CrossFileContextService
+
+# Mark entire module as slow - these tests analyze a full codebase
+pytestmark = pytest.mark.slow
 
 # Path to the functional test codebase
 TEST_CODEBASE_PATH = Path(__file__).parent / "test_codebase"

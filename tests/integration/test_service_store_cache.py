@@ -3,6 +3,9 @@
 
 """Integration tests for Service + Store + Cache workflow.
 
+NOTE: Marked as slow tests - integration tests create full project structures.
+Run with: pytest -m slow
+
 Tests the context injection workflow end-to-end per TDD Section 3.13.2.
 """
 
@@ -17,6 +20,9 @@ from xfile_context.cache import WorkingMemoryCache
 from xfile_context.config import Config
 from xfile_context.service import CrossFileContextService, ReadResult
 from xfile_context.storage import InMemoryStore
+
+# Mark entire module as slow - integration tests create full project structures
+pytestmark = pytest.mark.slow
 
 
 def create_config_file(project_path: Path, **kwargs: Any) -> Path:

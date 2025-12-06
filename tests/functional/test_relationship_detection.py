@@ -4,6 +4,9 @@
 """
 Functional Tests for Relationship Detection (Test Category 1).
 
+NOTE: Marked as slow tests - these analyze a full test codebase.
+Run with: pytest -m slow
+
 This module validates that all relationship types are correctly detected
 according to T-1.1 through T-1.8 from prd_testing.md Section 8.2.
 
@@ -38,6 +41,9 @@ from xfile_context.detectors import (
     WildcardImportDetector,
 )
 from xfile_context.models import RelationshipGraph, RelationshipType
+
+# Mark entire module as slow - these tests analyze a full codebase
+pytestmark = pytest.mark.slow
 
 # Path to the functional test codebase
 TEST_CODEBASE_PATH = Path(__file__).parent / "test_codebase"

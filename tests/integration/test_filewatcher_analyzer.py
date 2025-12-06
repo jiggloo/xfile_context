@@ -3,6 +3,9 @@
 
 """Integration tests for FileWatcher + Analyzer.
 
+NOTE: Marked as slow tests - integration tests create full project structures.
+Run with: pytest -m slow
+
 Tests that file change events trigger correct re-analysis per TDD Section 3.13.2.
 """
 
@@ -19,6 +22,9 @@ from xfile_context.file_watcher import FileWatcher
 from xfile_context.graph_updater import GraphUpdater
 from xfile_context.models import RelationshipGraph
 from xfile_context.service import CrossFileContextService
+
+# Mark entire module as slow - integration tests create full project structures
+pytestmark = pytest.mark.slow
 
 
 def create_config_file(project_path: Path, **kwargs) -> Path:

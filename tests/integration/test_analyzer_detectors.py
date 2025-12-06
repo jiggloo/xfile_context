@@ -3,6 +3,9 @@
 
 """Integration tests for PythonAnalyzer + Detectors.
 
+NOTE: Marked as slow tests - integration tests create full project structures.
+Run with: pytest -m slow
+
 Tests the full AST parsing pipeline with real Python files per TDD Section 3.13.2.
 """
 
@@ -25,6 +28,9 @@ from xfile_context.detectors import (
     WildcardImportDetector,
 )
 from xfile_context.models import RelationshipGraph, RelationshipType
+
+# Mark entire module as slow - integration tests create full project structures
+pytestmark = pytest.mark.slow
 
 
 class TestAnalyzerDetectorsIntegration:
