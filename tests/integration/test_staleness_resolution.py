@@ -3,6 +3,9 @@
 
 """Integration tests for Issue #117 Option B: Staleness resolution.
 
+NOTE: Marked as slow tests - integration tests create full project structures.
+Run with: pytest -m slow
+
 Tests the full integration of staleness resolution through the service layer,
 including:
 - Modified dependency files are re-analyzed
@@ -14,8 +17,13 @@ import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
+
 from xfile_context.config import Config
 from xfile_context.service import CrossFileContextService
+
+# Mark entire module as slow - integration tests create full project structures
+pytestmark = pytest.mark.slow
 
 
 class TestDependencyReanalysis:
