@@ -1159,6 +1159,24 @@ class CrossFileContextService:
             context_parts.append("Recent definitions:")
         context_parts.append("")
 
+        # Deduplicate relationships for recent definitions section (Issue #144)
+        # This is assembly-level deduplication (complements graph-level deduplication in PR #145).
+        # Key: (target_file, target_line, source_file, relationship_type)
+        # Excludes usage line number because a single function definition
+        # is sufficient for all usages in the file for now.
+        seen_dedup_keys: Set[Tuple[str, Optional[int], str, str]] = set()
+        deduplicated_rels: List[Relationship] = []
+        for rel in prioritized:
+            dedup_key = (
+                rel.target_file,
+                rel.target_line,
+                rel.source_file,
+                rel.relationship_type,
+            )
+            if dedup_key not in seen_dedup_keys:
+                seen_dedup_keys.add(dedup_key)
+                deduplicated_rels.append(rel)
+
         snippets_added = 0
         max_snippets = 10  # Reasonable limit per file
         warned_symbols: Set[Tuple[str, str]] = set()  # Track symbols we've warned about
@@ -1169,7 +1187,7 @@ class CrossFileContextService:
         # Track cumulative token count for injection logging (TDD Section 3.8.5)
         context_token_total = 0
 
-        for rel in prioritized:
+        for rel in deduplicated_rels:
             if snippets_added >= max_snippets:
                 break
 
@@ -1322,7 +1340,8 @@ class CrossFileContextService:
         token_count = self._count_tokens(context_text)
         logger.debug(
             f"Context injection for {target_file}: "
-            f"{len(prioritized)} dependencies, {snippets_added} snippets, {token_count} tokens"
+            f"{len(prioritized)} dependencies ({len(deduplicated_rels)} unique), "
+            f"{snippets_added} snippets, {token_count} tokens"
         )
 
         # Record token count for session metrics per FR-44
