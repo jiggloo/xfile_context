@@ -25,7 +25,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TextIO
 
-from xfile_context.log_config import build_log_filename, get_current_utc_date, get_warnings_dir
+from xfile_context.log_config import (
+    build_log_filename,
+    get_current_utc_date,
+    get_warnings_dir,
+    validate_filename_component,
+)
 from xfile_context.warning_formatter import StructuredWarning
 
 logger = logging.getLogger(__name__)
@@ -144,9 +149,8 @@ class WarningLogger:
         # Determine log filename
         self._session_id = session_id
         if log_file is not None:
-            # Legacy: explicit filename provided
-            if "/" in log_file or "\\" in log_file or ":" in log_file:
-                raise ValueError(f"log_file must be a filename only, not a path: {log_file}")
+            # Legacy: explicit filename provided - validate for security
+            validate_filename_component(log_file, "log_file")
             self._log_file = log_file
             self._use_date_rotation = False
         elif session_id is not None:

@@ -878,13 +878,13 @@ class TestInjectionLoggerEdgeCases:
         Tests path traversal protection per TDD Section 3.8.5.
         """
         # Attempt to create logger with path separator in filename
-        with pytest.raises(ValueError, match="must be a filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             InjectionLogger(log_dir=temp_log_dir, log_file="../traversal.jsonl")
 
-        with pytest.raises(ValueError, match="must be a filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             InjectionLogger(log_dir=temp_log_dir, log_file="sub/dir.jsonl")
 
-        with pytest.raises(ValueError, match="must be a filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             InjectionLogger(log_dir=temp_log_dir, log_file="C:\\path.jsonl")
 
     def test_context_manager_protocol(

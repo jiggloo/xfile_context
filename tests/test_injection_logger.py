@@ -217,10 +217,10 @@ class TestInjectionLogger:
 
     def test_initialization_rejects_path_in_log_file(self, tmp_path: Path) -> None:
         """Test InjectionLogger rejects path separators in log_file."""
-        with pytest.raises(ValueError, match="filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             InjectionLogger(log_dir=tmp_path, log_file="subdir/log.jsonl")
 
-        with pytest.raises(ValueError, match="filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             InjectionLogger(log_dir=tmp_path, log_file="..\\log.jsonl")
 
     def test_log_injection_creates_file(self, tmp_path: Path) -> None:

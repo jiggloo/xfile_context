@@ -37,6 +37,7 @@ from xfile_context.log_config import (
     build_log_filename,
     get_current_utc_date,
     get_session_metrics_dir,
+    validate_filename_component,
 )
 
 logger = logging.getLogger(__name__)
@@ -398,15 +399,8 @@ class MetricsCollector:
 
         # Determine log filename
         if log_file is not None:
-            # Legacy: explicit filename provided
-            # Check for null bytes (security - prevent path truncation attacks)
-            if "\0" in log_file:
-                raise ValueError(f"log_file contains null bytes: {log_file}")
-            # Check for path separators and parent directory references
-            if "/" in log_file or "\\" in log_file:
-                raise ValueError(f"log_file must be a filename only, not a path: {log_file}")
-            if ".." in log_file:
-                raise ValueError(f"log_file cannot contain parent directory references: {log_file}")
+            # Legacy: explicit filename provided - validate for security
+            validate_filename_component(log_file, "log_file")
             self._log_file = log_file
             self._use_date_rotation = False
         else:

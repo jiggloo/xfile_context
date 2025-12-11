@@ -326,7 +326,7 @@ class TestMetricsCollector:
 
     def test_init_rejects_path_in_log_file(self, temp_dir: Path) -> None:
         """Log file with path separators should be rejected."""
-        with pytest.raises(ValueError, match="filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             MetricsCollector(log_dir=temp_dir, log_file="subdir/metrics.jsonl")
 
     def test_init_rejects_null_bytes_in_log_file(self, temp_dir: Path) -> None:
@@ -336,7 +336,7 @@ class TestMetricsCollector:
 
     def test_init_rejects_parent_directory_in_log_file(self, temp_dir: Path) -> None:
         """Log file with parent directory reference should be rejected."""
-        with pytest.raises(ValueError, match="parent directory"):
+        with pytest.raises(ValueError, match="must not contain parent references"):
             MetricsCollector(log_dir=temp_dir, log_file="..metrics.jsonl")
 
     def test_record_injection_token_count(self, collector: MetricsCollector) -> None:

@@ -395,7 +395,15 @@ Check the MCP server logs for detailed diagnostics. Logs are written to:
 - **Warning logs**: `~/.cross_file_context/warnings/<DATE>-<SESSION>.jsonl`
 - **Session metrics**: `~/.cross_file_context/session_metrics/<DATE>-<SESSION>.jsonl`
 
-The log location can be customized using the `--data-root` CLI parameter when starting the MCP server.
+The log location can be customized using the `--data-root` CLI parameter when starting the MCP server:
+
+```bash
+# Use default location (~/.cross_file_context/)
+python -m xfile_context.mcp_server
+
+# Use custom location
+python -m xfile_context.mcp_server --data-root /custom/log/path
+```
 
 #### Check Session Metrics
 

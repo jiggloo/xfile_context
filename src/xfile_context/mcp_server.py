@@ -80,6 +80,8 @@ class CrossFileContextMCPServer:
                 config=config,
                 store=store,
                 cache=cache,
+                session_id=self.session_id,
+                data_root=self.data_root,
             )
         self.service = service
 

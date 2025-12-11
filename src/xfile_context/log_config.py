@@ -45,6 +45,27 @@ def get_current_utc_date() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def validate_filename_component(value: str, name: str = "value") -> None:
+    """Validate a string for safe use in filenames.
+
+    Checks for path traversal attacks and invalid characters.
+
+    Args:
+        value: The string to validate.
+        name: Name of the parameter for error messages.
+
+    Raises:
+        ValueError: If value contains path separators, parent references,
+                   or null bytes.
+    """
+    if "\0" in value:
+        raise ValueError(f"{name} contains null bytes: {value}")
+    if "/" in value or "\\" in value or ":" in value:
+        raise ValueError(f"{name} must not contain path separators: {value}")
+    if ".." in value:
+        raise ValueError(f"{name} must not contain parent references: {value}")
+
+
 def build_log_filename(session_id: str, extension: str = "jsonl") -> str:
     """Build a log filename with date and session ID.
 
@@ -54,7 +75,11 @@ def build_log_filename(session_id: str, extension: str = "jsonl") -> str:
 
     Returns:
         Filename like "2025-12-11-abc123-def456.jsonl"
+
+    Raises:
+        ValueError: If session_id contains path separators or invalid chars.
     """
+    validate_filename_component(session_id, "session_id")
     date_str = get_current_utc_date()
     return f"{date_str}-{session_id}.{extension}"
 

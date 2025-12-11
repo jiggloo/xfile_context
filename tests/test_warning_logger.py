@@ -338,22 +338,22 @@ class TestSecurityValidation:
 
     def test_log_file_path_traversal_forward_slash(self, temp_log_dir: Path) -> None:
         """Test that log_file with forward slash is rejected."""
-        with pytest.raises(ValueError, match="must be a filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             WarningLogger(log_dir=temp_log_dir, log_file="../malicious.jsonl")
 
     def test_log_file_path_traversal_backslash(self, temp_log_dir: Path) -> None:
         """Test that log_file with backslash is rejected."""
-        with pytest.raises(ValueError, match="must be a filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             WarningLogger(log_dir=temp_log_dir, log_file="..\\malicious.jsonl")
 
     def test_log_file_path_traversal_nested(self, temp_log_dir: Path) -> None:
         """Test that nested path in log_file is rejected."""
-        with pytest.raises(ValueError, match="must be a filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             WarningLogger(log_dir=temp_log_dir, log_file="subdir/file.jsonl")
 
     def test_log_file_windows_drive_letter(self, temp_log_dir: Path) -> None:
         """Test that Windows drive letter in log_file is rejected."""
-        with pytest.raises(ValueError, match="must be a filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             WarningLogger(log_dir=temp_log_dir, log_file="C:malicious.jsonl")
 
     def test_valid_log_file_name(self, temp_log_dir: Path) -> None:
