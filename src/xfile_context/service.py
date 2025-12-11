@@ -133,6 +133,8 @@ class CrossFileContextService:
         graph_updater: Optional[GraphUpdater] = None,
         injection_logger: Optional[InjectionLogger] = None,
         metrics_collector: Optional[MetricsCollector] = None,
+        session_id: Optional[str] = None,
+        data_root: Optional[Path] = None,
     ):
         """Initialize the service with its dependencies.
 
@@ -150,7 +152,13 @@ class CrossFileContextService:
             graph_updater: GraphUpdater instance (default: creates new updater)
             injection_logger: InjectionLogger instance (default: creates new logger)
             metrics_collector: MetricsCollector instance (default: creates new collector)
+            session_id: Session ID for log filenames (Issue #150). If None, loggers
+                       use legacy static filenames.
+            data_root: Root directory for logs (Issue #150). If None, loggers use
+                      ~/.cross_file_context/ by default.
         """
+        self._session_id = session_id
+        self._data_root = data_root
         self.config = config
         self._project_root = Path(project_root) if project_root else Path.cwd()
 
@@ -223,18 +231,26 @@ class CrossFileContextService:
 
         # Initialize injection logger for context injection event logging (TDD Section 3.8.5)
         # Per FR-26: Log all context injections for analysis
+        # Issue #150: Use session_id and data_root for new log architecture
         self._injection_logger = (
             injection_logger
             if injection_logger is not None
-            else InjectionLogger(log_dir=self._project_root / ".cross_file_context_logs")
+            else InjectionLogger(
+                session_id=self._session_id,
+                data_root=self._data_root,
+            )
         )
 
         # Initialize metrics collector for session metrics (TDD Section 3.10.1)
         # Per FR-43: Emit metrics at session end
+        # Issue #150: Use session_id and data_root for new log architecture
         self._metrics_collector = (
             metrics_collector
             if metrics_collector is not None
-            else MetricsCollector(log_dir=self._project_root / ".cross_file_context_logs")
+            else MetricsCollector(
+                session_id=self._session_id,
+                data_root=self._data_root,
+            )
         )
 
         # Capture configuration values in metrics per FR-49
@@ -250,11 +266,12 @@ class CrossFileContextService:
         )
 
         # Initialize warning logger for warning event logging (TDD Section 3.9.5)
-        # Shares log directory with injection logger and metrics collector
+        # Issue #150: Use session_id and data_root for new log architecture
         from xfile_context.warning_logger import WarningLogger
 
         self._warning_logger = WarningLogger(
-            log_dir=self._project_root / ".cross_file_context_logs"
+            session_id=self._session_id,
+            data_root=self._data_root,
         )
 
         # Initialize RelationshipBuilder for two-phase analysis (Issue #125)

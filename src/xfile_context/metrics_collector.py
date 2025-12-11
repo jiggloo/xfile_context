@@ -7,9 +7,10 @@ This module implements the MetricsCollector class per TDD Section 3.4.9 and 3.10
 - Aggregate session-level metrics from all system components
 - Calculate token count statistics (min, max, median, p95)
 - Write metrics to JSONL file at session end
+- Date-based file rotation for eventual immutability (Issue #150)
 - Capture configuration values for correlation
 
-Log Location: .cross_file_context_logs/session_metrics.jsonl
+Log Location: ~/.cross_file_context/session_metrics/<DATE>-<SESSION-ID>.jsonl
 
 Related Requirements:
 - FR-43 (emit metrics at session end)
@@ -19,6 +20,7 @@ Related Requirements:
 - FR-47 (metrics anonymization - file paths optionally hashed)
 - FR-49 (configuration values in metrics)
 - T-10.1 through T-10.6 (session metrics tests)
+- Issue #150 (logging architecture cleanup)
 """
 
 import hashlib
@@ -31,12 +33,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TextIO, Tuple
 
+from xfile_context.log_config import (
+    build_log_filename,
+    get_current_utc_date,
+    get_session_metrics_dir,
+    validate_filename_component,
+)
+
 logger = logging.getLogger(__name__)
 
-# Default log directory name (shared with other loggers)
+# Legacy default log directory name (for backwards compatibility in tests)
 DEFAULT_LOG_DIR = ".cross_file_context_logs"
 
-# Default session metrics log filename
+# Legacy default session metrics log filename (for backwards compatibility in tests)
 DEFAULT_METRICS_LOG_FILE = "session_metrics.jsonl"
 
 
@@ -327,10 +336,11 @@ class MetricsCollector:
     - Token count tracking with percentile calculation
     - Integration with cache, injection logger, warning logger
     - JSONL output for machine-parseable analysis
+    - Date-based file rotation for eventual immutability (Issue #150)
     - Optional file path anonymization
 
     Usage:
-        collector = MetricsCollector()
+        collector = MetricsCollector(session_id="abc-123")
 
         # Record events during session
         collector.record_injection_token_count(150)
@@ -344,7 +354,7 @@ class MetricsCollector:
         collector.finalize_and_write()
 
     Context manager usage:
-        with MetricsCollector() as collector:
+        with MetricsCollector(session_id="abc-123") as collector:
             # ... session operations ...
         # Metrics automatically written on exit
     """
@@ -355,40 +365,55 @@ class MetricsCollector:
         log_file: Optional[str] = None,
         anonymize_paths: bool = False,
         session_id: Optional[str] = None,
+        data_root: Optional[Path] = None,
     ) -> None:
         """Initialize the metrics collector.
 
         Args:
-            log_dir: Directory for log files. If None, uses current working
-                    directory + .cross_file_context_logs/
-            log_file: Log filename. If None, uses session_metrics.jsonl.
-                     Must be a simple filename without path separators.
+            log_dir: Directory for log files. If None and data_root is None,
+                    uses ~/.cross_file_context/session_metrics/.
+                    DEPRECATED: Use data_root instead.
+            log_file: Log filename. If None, uses date-session pattern.
+                     DEPRECATED: Filename is auto-generated from session_id.
             anonymize_paths: If True, hash file paths in metrics (FR-47).
-            session_id: Optional session ID. If None, generates a UUID.
+            session_id: Session ID for log filename. If None, generates a UUID.
+            data_root: Root directory for logs. If provided, uses
+                      {data_root}/session_metrics/ as log directory.
 
         Raises:
             ValueError: If log_file contains path separators.
         """
-        if log_dir is None:
-            log_dir = Path.cwd() / DEFAULT_LOG_DIR
-        self._log_dir = Path(log_dir)
+        # Initialize session ID first (needed for filename)
+        self._session_id = session_id or str(uuid.uuid4())
 
-        # Validate log_file doesn't contain path components (security)
-        log_file = log_file or DEFAULT_METRICS_LOG_FILE
-        # Check for null bytes (security - prevent path truncation attacks)
-        if "\0" in log_file:
-            raise ValueError(f"log_file contains null bytes: {log_file}")
-        # Check for path separators and parent directory references
-        if "/" in log_file or "\\" in log_file:
-            raise ValueError(f"log_file must be a filename only, not a path: {log_file}")
-        if ".." in log_file:
-            raise ValueError(f"log_file cannot contain parent directory references: {log_file}")
-        self._log_file = log_file
+        # Determine log directory
+        if data_root is not None:
+            # New architecture: use {data_root}/session_metrics/
+            self._log_dir = get_session_metrics_dir(data_root)
+        elif log_dir is not None:
+            # Legacy: explicit log_dir provided
+            self._log_dir = Path(log_dir)
+        else:
+            # New default: ~/.cross_file_context/session_metrics/
+            self._log_dir = get_session_metrics_dir()
+
+        # Determine log filename
+        if log_file is not None:
+            # Legacy: explicit filename provided - validate for security
+            validate_filename_component(log_file, "log_file")
+            self._log_file = log_file
+            self._use_date_rotation = False
+        else:
+            # New architecture: date-session filename
+            self._log_file = build_log_filename(self._session_id)
+            self._use_date_rotation = True
 
         self._anonymize_paths = anonymize_paths
 
-        # Initialize session
-        self._session_id = session_id or str(uuid.uuid4())
+        # Track current date for rotation
+        self._current_date = get_current_utc_date()
+
+        # Initialize session start time
         self._start_time = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
         # Token count tracking (for percentile calculation)
@@ -419,6 +444,21 @@ class MetricsCollector:
     def _ensure_log_dir(self) -> None:
         """Create log directory if it doesn't exist."""
         self._log_dir.mkdir(parents=True, exist_ok=True)
+
+    def _check_date_rotation(self) -> None:
+        """Check if date has changed and update filename if needed.
+
+        Per Issue #150: Log files are split by UTC date for eventual immutability.
+        """
+        if not self._use_date_rotation:
+            return
+
+        current_date = get_current_utc_date()
+        if current_date != self._current_date:
+            # Date has changed - update filename
+            logger.debug(f"Metrics date changed: {self._current_date} -> {current_date}")
+            self._current_date = current_date
+            self._log_file = build_log_filename(self._session_id)
 
     def _get_log_path(self) -> Path:
         """Get full path to the log file.
@@ -743,6 +783,9 @@ class MetricsCollector:
         Args:
             metrics: SessionMetrics to write.
         """
+        # Check for date rotation before writing
+        self._check_date_rotation()
+
         self._ensure_log_dir()
         log_path = self._get_log_path()
 

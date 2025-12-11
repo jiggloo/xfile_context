@@ -391,9 +391,19 @@ pip install -e ".[dev]"
 #### Enable Verbose Logging
 
 Check the MCP server logs for detailed diagnostics. Logs are written to:
-- **Injection logs**: `.xfile_context/injection_log.jsonl` in your project directory
-- **Warning logs**: `.xfile_context/warning_log.jsonl` in your project directory
-- **Session metrics**: `.xfile_context/session_metrics.jsonl` (written at session end)
+- **Injection logs**: `~/.cross_file_context/injections/<DATE>-<SESSION>.jsonl`
+- **Warning logs**: `~/.cross_file_context/warnings/<DATE>-<SESSION>.jsonl`
+- **Session metrics**: `~/.cross_file_context/session_metrics/<DATE>-<SESSION>.jsonl`
+
+The log location can be customized using the `--data-root` CLI parameter when starting the MCP server:
+
+```bash
+# Use default location (~/.cross_file_context/)
+python -m xfile_context.mcp_server
+
+# Use custom location
+python -m xfile_context.mcp_server --data-root /custom/log/path
+```
 
 #### Check Session Metrics
 
@@ -408,7 +418,7 @@ After a session, review the metrics file for insights:
 Use the built-in analysis tool to process session metrics and get configuration recommendations:
 
 ```bash
-python scripts/analyze_metrics.py .cross_file_context_logs/session_metrics.jsonl
+python scripts/analyze_metrics.py ~/.cross_file_context/session_metrics/<DATE>-<SESSION>.jsonl
 ```
 
 The tool produces a human-readable report including:

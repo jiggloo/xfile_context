@@ -24,9 +24,7 @@ import pytest
 
 from xfile_context.warning_formatter import StructuredWarning, WarningEmitter
 from xfile_context.warning_logger import (
-    DEFAULT_LOG_DIR,
     DEFAULT_WARNING_LOG_FILE,
-    LOG_SIZE_WARNING_THRESHOLD_BYTES,
     WarningLogger,
     WarningStatistics,
     read_warnings_from_log,
@@ -97,12 +95,19 @@ class TestWarningLogger:
     """Test cases for WarningLogger class."""
 
     def test_init_default_values(self) -> None:
-        """Test initialization with default values."""
+        """Test initialization with default values.
+
+        Per Issue #150, the default directory is now ~/.cross_file_context/warnings/
+        and filename includes session ID.
+        """
         logger = WarningLogger()
 
-        assert logger._log_dir == Path.cwd() / DEFAULT_LOG_DIR
+        # Default directory is now user home based
+        from xfile_context.log_config import get_warnings_dir
+
+        assert logger._log_dir == get_warnings_dir()
+        # Without session_id, falls back to legacy filename
         assert logger._log_file == DEFAULT_WARNING_LOG_FILE
-        assert logger._size_warning_threshold == LOG_SIZE_WARNING_THRESHOLD_BYTES
         assert logger._warning_count == 0
         assert logger._file_handle is None
 
@@ -111,12 +116,12 @@ class TestWarningLogger:
         logger = WarningLogger(
             log_dir=temp_log_dir,
             log_file="custom.jsonl",
-            size_warning_threshold=5000,
+            size_warning_threshold=5000,  # Deprecated but still accepted
         )
 
         assert logger._log_dir == temp_log_dir
         assert logger._log_file == "custom.jsonl"
-        assert logger._size_warning_threshold == 5000
+        # size_warning_threshold is now deprecated and ignored per Issue #150
 
     def test_log_single_warning(
         self, temp_log_dir: Path, sample_warning: StructuredWarning
@@ -333,22 +338,22 @@ class TestSecurityValidation:
 
     def test_log_file_path_traversal_forward_slash(self, temp_log_dir: Path) -> None:
         """Test that log_file with forward slash is rejected."""
-        with pytest.raises(ValueError, match="must be a filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             WarningLogger(log_dir=temp_log_dir, log_file="../malicious.jsonl")
 
     def test_log_file_path_traversal_backslash(self, temp_log_dir: Path) -> None:
         """Test that log_file with backslash is rejected."""
-        with pytest.raises(ValueError, match="must be a filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             WarningLogger(log_dir=temp_log_dir, log_file="..\\malicious.jsonl")
 
     def test_log_file_path_traversal_nested(self, temp_log_dir: Path) -> None:
         """Test that nested path in log_file is rejected."""
-        with pytest.raises(ValueError, match="must be a filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             WarningLogger(log_dir=temp_log_dir, log_file="subdir/file.jsonl")
 
     def test_log_file_windows_drive_letter(self, temp_log_dir: Path) -> None:
         """Test that Windows drive letter in log_file is rejected."""
-        with pytest.raises(ValueError, match="must be a filename only"):
+        with pytest.raises(ValueError, match="must not contain path separators"):
             WarningLogger(log_dir=temp_log_dir, log_file="C:malicious.jsonl")
 
     def test_valid_log_file_name(self, temp_log_dir: Path) -> None:
@@ -411,9 +416,14 @@ class TestLogFileManagement:
         size = logger.get_log_size()
         assert size > 0
 
-    def test_size_warning_threshold(self, temp_log_dir: Path) -> None:
-        """Test warning when log file exceeds size threshold."""
-        # Use small threshold for testing (50 bytes)
+    def test_size_warning_threshold_deprecated(self, temp_log_dir: Path) -> None:
+        """Test that size warnings are no longer issued per Issue #150.
+
+        Per Issue #150, file size warnings are deprecated. Log files are now
+        split by date for eventual immutability, and users control cleanup
+        via date-based file management.
+        """
+        # Use small threshold for testing (50 bytes) - now ignored
         logger = WarningLogger(log_dir=temp_log_dir, size_warning_threshold=50)
 
         with mock.patch("xfile_context.warning_logger.logger") as mock_logger:
@@ -434,16 +444,16 @@ class TestLogFileManagement:
 
             logger.close()
 
-            # Verify warning was issued
+            # Per Issue #150, size warnings are no longer issued
             warning_calls = [
                 call
                 for call in mock_logger.warning.call_args_list
                 if "Warning log file has grown" in str(call)
             ]
-            assert len(warning_calls) >= 1
+            assert len(warning_calls) == 0, "Size warnings should not be issued per Issue #150"
 
-    def test_size_warning_only_once(self, temp_log_dir: Path) -> None:
-        """Test that size warning is only issued once."""
+    def test_size_warning_deprecated_multiple_writes(self, temp_log_dir: Path) -> None:
+        """Test that size warnings are not issued even with many writes per Issue #150."""
         logger = WarningLogger(log_dir=temp_log_dir, size_warning_threshold=100)
 
         with mock.patch("xfile_context.warning_logger.logger") as mock_logger:
@@ -463,14 +473,13 @@ class TestLogFileManagement:
 
             logger.close()
 
-            # Count size warnings
+            # Per Issue #150, no size warnings should be issued
             warning_calls = [
                 call
                 for call in mock_logger.warning.call_args_list
                 if "Warning log file has grown" in str(call)
             ]
-            # Should be at most 1
-            assert len(warning_calls) <= 1
+            assert len(warning_calls) == 0, "Size warnings should not be issued per Issue #150"
 
 
 class TestReadWarningsFromLog:
