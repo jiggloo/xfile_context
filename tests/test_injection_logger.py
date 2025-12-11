@@ -500,13 +500,20 @@ class TestInjectionLogger:
         log_path = tmp_path / DEFAULT_INJECTION_LOG_FILE
         assert log_path.exists()
 
-    def test_file_size_warning(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        """Test warning when log file exceeds size threshold (T-5.6)."""
+    def test_file_size_warning_deprecated(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test that size warnings are no longer issued per Issue #150.
+
+        Per Issue #150, file size warnings are deprecated. Log files are now
+        split by date for eventual immutability, and users control cleanup
+        via date-based file management.
+        """
         import logging
 
         caplog.set_level(logging.WARNING)
 
-        # Use a very small threshold for testing
+        # Use a very small threshold for testing - this is now ignored
         small_threshold = 100  # 100 bytes
         logger = InjectionLogger(log_dir=tmp_path, size_warning_threshold=small_threshold)
 
@@ -528,11 +535,11 @@ class TestInjectionLogger:
 
         logger.close()
 
-        # Check that warning was issued
+        # Per Issue #150, size warnings are no longer issued
         warning_found = any(
             "Injection log file has grown to" in record.message for record in caplog.records
         )
-        assert warning_found, "Expected file size warning not found in logs"
+        assert not warning_found, "Size warnings should not be issued per Issue #150"
 
 
 class TestGetRecentInjections:

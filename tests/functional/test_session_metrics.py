@@ -344,7 +344,7 @@ class TestT101SessionMetricsEmission:
             data = json.loads(line.strip())
             assert isinstance(data, dict), "Each line should be a JSON object"
 
-    def test_multiple_sessions_append_to_same_file(
+    def test_multiple_sessions_create_separate_files(
         self,
         temp_log_dir: Path,
         mock_cache: MagicMock,
@@ -352,7 +352,11 @@ class TestT101SessionMetricsEmission:
         mock_warning_logger: MagicMock,
         mock_graph: MagicMock,
     ) -> None:
-        """Verify multiple sessions append to same metrics file (FR-43)."""
+        """Verify multiple sessions create separate files per Issue #150.
+
+        Per Issue #150, each session creates its own file with the session ID
+        in the filename to avoid write collisions between concurrent instances.
+        """
         # First session
         collector1 = MetricsCollector(log_dir=temp_log_dir, session_id="session-1")
         collector1.finalize_and_write(
@@ -380,19 +384,29 @@ class TestT101SessionMetricsEmission:
             graph=mock_graph,
         )
 
-        # Verify all sessions in file
-        log_path = collector1.get_log_path()
-        with open(log_path) as f:
-            lines = f.readlines()
+        # Verify each session created its own file
+        log_path1 = collector1.get_log_path()
+        log_path2 = collector2.get_log_path()
+        log_path3 = collector3.get_log_path()
 
-        assert len(lines) == 3, "Should have 3 session entries"
+        # Each file should be different (session ID in filename)
+        assert log_path1 != log_path2
+        assert log_path2 != log_path3
+        assert log_path1 != log_path3
 
-        session_ids = []
-        for line in lines:
-            data = json.loads(line)
-            session_ids.append(data["session_id"])
-
-        assert session_ids == ["session-1", "session-2", "session-3"]
+        # Verify each file contains exactly one entry with correct session ID
+        for collector, expected_id in [
+            (collector1, "session-1"),
+            (collector2, "session-2"),
+            (collector3, "session-3"),
+        ]:
+            log_path = collector.get_log_path()
+            assert log_path.exists(), f"Log file should exist: {log_path}"
+            with open(log_path) as f:
+                lines = f.readlines()
+            assert len(lines) == 1, "Each file should have exactly one entry"
+            data = json.loads(lines[0])
+            assert data["session_id"] == expected_id
 
     def test_empty_session_produces_valid_metrics(
         self,
@@ -841,8 +855,13 @@ class TestT103MetricsStructure:
         mock_warning_logger: MagicMock,
         mock_graph: MagicMock,
     ) -> None:
-        """Verify schema is consistent across sessions (FR-45)."""
-        # Create multiple sessions with different data
+        """Verify schema is consistent across sessions (FR-45).
+
+        Per Issue #150, each session creates its own file. This test verifies
+        that all sessions produce metrics with the same schema.
+        """
+        # Create multiple sessions with different data, track their paths
+        collectors = []
         for i in range(3):
             collector = MetricsCollector(log_dir=temp_log_dir, session_id=f"schema-test-{i}")
 
@@ -857,16 +876,18 @@ class TestT103MetricsStructure:
                 warning_logger=mock_warning_logger,
                 graph=mock_graph,
             )
+            collectors.append(collector)
 
-        # Read all sessions and compare keys
-        log_path = temp_log_dir / "session_metrics.jsonl"
+        # Read all sessions from their individual files and compare keys
         schemas: List[set] = []
 
-        with open(log_path) as f:
-            for line in f:
-                data = json.loads(line)
-                # Get top-level keys
-                schemas.append(set(data.keys()))
+        for collector in collectors:
+            log_path = collector.get_log_path()
+            with open(log_path) as f:
+                for line in f:
+                    data = json.loads(line)
+                    # Get top-level keys
+                    schemas.append(set(data.keys()))
 
         # All sessions should have same top-level keys
         first_schema = schemas[0]
@@ -1059,11 +1080,13 @@ class TestT104MetricsAnonymization:
         mock_warning_logger: MagicMock,
         mock_graph: MagicMock,
     ) -> None:
-        """Verify metrics can be aggregated across sessions (FR-47)."""
-        # Create multiple sessions
-        all_hit_rates = []
-        all_injection_counts = []
+        """Verify metrics can be aggregated across sessions (FR-47).
 
+        Per Issue #150, each session creates its own file. This test verifies
+        that metrics from multiple session files can still be aggregated.
+        """
+        # Create multiple sessions, track their paths
+        collectors = []
         for i in range(5):
             collector = MetricsCollector(log_dir=temp_log_dir, session_id=f"aggregate-{i}")
             collector.finalize_and_write(
@@ -1072,14 +1095,17 @@ class TestT104MetricsAnonymization:
                 warning_logger=mock_warning_logger,
                 graph=mock_graph,
             )
+            collectors.append(collector)
 
-        # Read all sessions
-        sessions = read_session_metrics(temp_log_dir / "session_metrics.jsonl")
+        # Read all sessions from their individual files
+        all_hit_rates = []
+        all_injection_counts = []
 
-        # Aggregate metrics
-        for session in sessions:
-            all_hit_rates.append(session.cache_performance.hit_rate)
-            all_injection_counts.append(session.context_injection.total_injections)
+        for collector in collectors:
+            sessions = read_session_metrics(collector.get_log_path())
+            for session in sessions:
+                all_hit_rates.append(session.cache_performance.hit_rate)
+                all_injection_counts.append(session.context_injection.total_injections)
 
         # Verify aggregation is possible
         assert len(all_hit_rates) == 5
@@ -1415,10 +1441,21 @@ class TestT107MetricsAnalysisTool:
         mock_warning_logger: MagicMock,
         mock_graph: MagicMock,
     ) -> None:
-        """Verify analysis can read multiple sessions (FR-48)."""
-        # Create multiple sessions
+        """Verify analysis can read multiple sessions (FR-48).
+
+        Per Issue #150, each session creates its own file. This test uses
+        explicit log_file to write multiple sessions to a shared file for
+        analysis testing.
+        """
+        log_path = temp_log_dir / "session_metrics.jsonl"
+
+        # Create multiple sessions with explicit log_file for shared file
         for i in range(10):
-            collector = MetricsCollector(log_dir=temp_log_dir, session_id=f"multi-{i}")
+            collector = MetricsCollector(
+                log_dir=temp_log_dir,
+                log_file="session_metrics.jsonl",
+                session_id=f"multi-{i}",
+            )
 
             # Vary the data
             for _ in range(i + 5):
@@ -1432,7 +1469,7 @@ class TestT107MetricsAnalysisTool:
             )
 
         # Read all sessions
-        sessions = read_session_metrics(temp_log_dir / "session_metrics.jsonl")
+        sessions = read_session_metrics(log_path)
         assert len(sessions) == 10
 
         # Verify all sessions are accessible
@@ -1447,11 +1484,17 @@ class TestT107MetricsAnalysisTool:
         mock_graph: MagicMock,
     ) -> None:
         """Verify analysis can compute aggregate statistics (FR-48)."""
+        log_path = temp_log_dir / "session_metrics.jsonl"
+
         # Create sessions with varying cache performance
         hit_rates = [0.70, 0.75, 0.80, 0.85, 0.90]
 
         for i, hit_rate in enumerate(hit_rates):
-            collector = MetricsCollector(log_dir=temp_log_dir, session_id=f"agg-{i}")
+            collector = MetricsCollector(
+                log_dir=temp_log_dir,
+                log_file="session_metrics.jsonl",
+                session_id=f"agg-{i}",
+            )
 
             mock_cache = MagicMock()
             mock_stats = MagicMock()
@@ -1471,7 +1514,7 @@ class TestT107MetricsAnalysisTool:
             )
 
         # Read and compute statistics
-        sessions = read_session_metrics(temp_log_dir / "session_metrics.jsonl")
+        sessions = read_session_metrics(log_path)
 
         collected_hit_rates = [s.cache_performance.hit_rate for s in sessions]
 
@@ -1492,12 +1535,18 @@ class TestT107MetricsAnalysisTool:
         mock_graph: MagicMock,
     ) -> None:
         """Verify analysis can identify outlier sessions (FR-48)."""
+        log_path = temp_log_dir / "session_metrics.jsonl"
+
         # Create sessions with one outlier
         normal_warning_counts = [5, 6, 7, 8, 9]
         outlier_warning_count = 50
 
         for i, count in enumerate(normal_warning_counts):
-            collector = MetricsCollector(log_dir=temp_log_dir, session_id=f"normal-{i}")
+            collector = MetricsCollector(
+                log_dir=temp_log_dir,
+                log_file="session_metrics.jsonl",
+                session_id=f"normal-{i}",
+            )
 
             mock_cache = MagicMock()
             mock_stats = MagicMock()
@@ -1523,7 +1572,11 @@ class TestT107MetricsAnalysisTool:
             )
 
         # Add outlier session
-        collector = MetricsCollector(log_dir=temp_log_dir, session_id="outlier")
+        collector = MetricsCollector(
+            log_dir=temp_log_dir,
+            log_file="session_metrics.jsonl",
+            session_id="outlier",
+        )
 
         mock_cache = MagicMock()
         mock_stats = MagicMock()
@@ -1549,7 +1602,7 @@ class TestT107MetricsAnalysisTool:
         )
 
         # Read and identify outlier
-        sessions = read_session_metrics(temp_log_dir / "session_metrics.jsonl")
+        sessions = read_session_metrics(log_path)
         warning_counts = [s.warnings.total_warnings for s in sessions]
 
         # Find sessions with warnings > mean + 2*std
@@ -1572,8 +1625,14 @@ class TestT107MetricsAnalysisTool:
         mock_graph: MagicMock,
     ) -> None:
         """Verify analysis data supports configuration suggestions (FR-48)."""
+        log_path = temp_log_dir / "session_metrics.jsonl"
+
         # Create sessions with token count data
-        collector = MetricsCollector(log_dir=temp_log_dir, session_id="config-suggest")
+        collector = MetricsCollector(
+            log_dir=temp_log_dir,
+            log_file="session_metrics.jsonl",
+            session_id="config-suggest",
+        )
 
         # Simulate realistic token distribution
         # Use this to determine recommended token limit
@@ -1604,7 +1663,7 @@ class TestT107MetricsAnalysisTool:
             graph=mock_graph,
         )
 
-        sessions = read_session_metrics(temp_log_dir / "session_metrics.jsonl")
+        sessions = read_session_metrics(log_path)
         session = sessions[0]
 
         # P95 token count suggests a good token limit
@@ -1630,9 +1689,15 @@ class TestT107MetricsAnalysisTool:
         mock_graph: MagicMock,
     ) -> None:
         """Verify read_session_metrics respects limit parameter (FR-48)."""
-        # Create many sessions
+        log_path = temp_log_dir / "session_metrics.jsonl"
+
+        # Create many sessions with explicit log_file for shared file
         for i in range(20):
-            collector = MetricsCollector(log_dir=temp_log_dir, session_id=f"limit-test-{i}")
+            collector = MetricsCollector(
+                log_dir=temp_log_dir,
+                log_file="session_metrics.jsonl",
+                session_id=f"limit-test-{i}",
+            )
             collector.finalize_and_write(
                 cache=mock_cache,
                 injection_logger=mock_injection_logger,
@@ -1641,7 +1706,7 @@ class TestT107MetricsAnalysisTool:
             )
 
         # Read with limit
-        sessions = read_session_metrics(temp_log_dir / "session_metrics.jsonl", limit=5)
+        sessions = read_session_metrics(log_path, limit=5)
         assert len(sessions) == 5
 
         # Verify first 5 sessions

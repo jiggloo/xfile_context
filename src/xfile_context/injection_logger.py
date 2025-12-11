@@ -6,11 +6,11 @@
 This module implements structured injection event logging per TDD Section 3.8.5:
 - JSONL format (one JSON object per line)
 - Real-time logging with immediate flush
-- Log file size monitoring
+- Date-based file rotation for eventual immutability (Issue #150)
 - Injection statistics for session metrics
 - Query API for recent injections (FR-29)
 
-Log Location: .cross_file_context_logs/injections.jsonl
+Log Location: ~/.cross_file_context/injections/<DATE>-<SESSION-ID>.jsonl
 
 Related Requirements:
 - FR-26 (log all context injections)
@@ -18,6 +18,7 @@ Related Requirements:
 - FR-28 (JSONL compatible with Claude Code session logs)
 - FR-29 (query API for recent injection events)
 - T-5.1 through T-5.7 (injection logging comprehensive tests)
+- Issue #150 (logging architecture cleanup)
 """
 
 import json
@@ -28,15 +29,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TextIO
 
+from xfile_context.log_config import build_log_filename, get_current_utc_date, get_injections_dir
+
 logger = logging.getLogger(__name__)
 
-# Default log directory name (shared with warning_logger)
+# Legacy default log directory name (for backwards compatibility in tests)
 DEFAULT_LOG_DIR = ".cross_file_context_logs"
 
-# Default injection log filename
+# Legacy default injection log filename (for backwards compatibility in tests)
 DEFAULT_INJECTION_LOG_FILE = "injections.jsonl"
 
-# Size threshold for warning about large log files (50MB per TDD 3.8.5)
+# Legacy size threshold constant (kept for backwards compatibility in tests)
+# Note: Size warnings are no longer issued per Issue #150, but this constant
+# remains for test compatibility
 LOG_SIZE_WARNING_THRESHOLD_BYTES = 50 * 1024 * 1024  # 50MB
 
 
@@ -213,12 +218,12 @@ class InjectionLogger:
     Features:
     - JSONL format (one JSON object per line)
     - Immediate flush after each write
-    - Log file size monitoring with warnings
+    - Date-based file rotation for eventual immutability (Issue #150)
     - Injection statistics generation for session metrics
     - Query API for recent injections (FR-29)
 
     Usage:
-        logger = InjectionLogger()
+        logger = InjectionLogger(session_id="abc-123")
         logger.log_injection(injection_event)
         # Or log multiple at once
         logger.log_injections(list_of_events)
@@ -230,7 +235,7 @@ class InjectionLogger:
         logger.close()
 
     Context manager usage:
-        with InjectionLogger() as logger:
+        with InjectionLogger(session_id="abc-123") as logger:
             logger.log_injection(event)
     """
 
@@ -240,35 +245,64 @@ class InjectionLogger:
         log_file: Optional[str] = None,
         size_warning_threshold: int = LOG_SIZE_WARNING_THRESHOLD_BYTES,
         max_unique_files_tracked: int = 10000,
+        session_id: Optional[str] = None,
+        data_root: Optional[Path] = None,
     ) -> None:
         """Initialize the injection logger.
 
         Args:
-            log_dir: Directory for log files. If None, uses current working
-                    directory + .cross_file_context_logs/
-            log_file: Log filename. If None, uses injections.jsonl.
-                     Must be a simple filename without path separators.
-            size_warning_threshold: File size in bytes at which to warn about
-                                   large log files. Default is 50MB per TDD 3.8.5.
+            log_dir: Directory for log files. If None and data_root is None,
+                    uses ~/.cross_file_context/injections/.
+                    DEPRECATED: Use data_root instead.
+            log_file: Log filename. If None, uses date-session pattern.
+                     DEPRECATED: Filename is auto-generated from session_id.
+            size_warning_threshold: DEPRECATED - no longer used per Issue #150.
+                                   Kept for backwards compatibility.
             max_unique_files_tracked: Maximum number of unique files to track
                                      in statistics. Prevents memory exhaustion.
                                      Default is 10000.
+            session_id: Session ID for log filename. Required for new architecture.
+                       If None, falls back to legacy static filename.
+            data_root: Root directory for logs. If provided, uses
+                      {data_root}/injections/ as log directory.
 
         Raises:
             ValueError: If log_file contains path separators.
         """
-        if log_dir is None:
-            log_dir = Path.cwd() / DEFAULT_LOG_DIR
-        self._log_dir = Path(log_dir)
+        # size_warning_threshold is ignored per Issue #150 (no size limits)
+        _ = size_warning_threshold
+        # Determine log directory
+        if data_root is not None:
+            # New architecture: use {data_root}/injections/
+            self._log_dir = get_injections_dir(data_root)
+        elif log_dir is not None:
+            # Legacy: explicit log_dir provided
+            self._log_dir = Path(log_dir)
+        else:
+            # New default: ~/.cross_file_context/injections/
+            self._log_dir = get_injections_dir()
 
-        # Validate log_file doesn't contain path components (security)
-        log_file = log_file or DEFAULT_INJECTION_LOG_FILE
-        if "/" in log_file or "\\" in log_file or ":" in log_file:
-            raise ValueError(f"log_file must be a filename only, not a path: {log_file}")
-        self._log_file = log_file
+        # Determine log filename
+        self._session_id = session_id
+        if log_file is not None:
+            # Legacy: explicit filename provided
+            if "/" in log_file or "\\" in log_file or ":" in log_file:
+                raise ValueError(f"log_file must be a filename only, not a path: {log_file}")
+            self._log_file = log_file
+            self._use_date_rotation = False
+        elif session_id is not None:
+            # New architecture: date-session filename
+            self._log_file = build_log_filename(session_id)
+            self._use_date_rotation = True
+        else:
+            # Fallback to legacy static filename
+            self._log_file = DEFAULT_INJECTION_LOG_FILE
+            self._use_date_rotation = False
 
-        self._size_warning_threshold = size_warning_threshold
         self._max_unique_files_tracked = max_unique_files_tracked
+
+        # Track current date for rotation
+        self._current_date = get_current_utc_date()
 
         # Statistics tracking
         self._injection_count = 0
@@ -280,7 +314,6 @@ class InjectionLogger:
 
         # File handle (lazy initialization)
         self._file_handle: Optional[TextIO] = None
-        self._size_warning_issued = False
 
     def _ensure_log_dir(self) -> None:
         """Create log directory if it doesn't exist."""
@@ -294,12 +327,33 @@ class InjectionLogger:
         """
         return self._log_dir / self._log_file
 
+    def _check_date_rotation(self) -> None:
+        """Check if date has changed and rotate file if needed.
+
+        Per Issue #150: Log files are split by UTC date for eventual immutability.
+        """
+        if not self._use_date_rotation:
+            return
+
+        current_date = get_current_utc_date()
+        if current_date != self._current_date:
+            # Date has changed - close current file and update filename
+            if self._file_handle is not None:
+                self._file_handle.close()
+                self._file_handle = None
+                logger.debug(f"Rotated injection log: {self._current_date} -> {current_date}")
+            self._current_date = current_date
+            self._log_file = build_log_filename(self._session_id)  # type: ignore[arg-type]
+
     def _open_file(self) -> TextIO:
         """Open or get the file handle for writing.
 
         Returns:
             File handle open for appending.
         """
+        # Check for date rotation before opening
+        self._check_date_rotation()
+
         if self._file_handle is None:
             self._ensure_log_dir()
             log_path = self._get_log_path()
@@ -307,26 +361,6 @@ class InjectionLogger:
             self._file_handle = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
             logger.debug(f"Opened injection log file: {log_path}")
         return self._file_handle
-
-    def _check_file_size(self) -> None:
-        """Check log file size and warn if exceeds threshold.
-
-        Per TDD Section 3.8.5: If file grows >50MB, warn user.
-        """
-        if self._size_warning_issued:
-            return
-
-        log_path = self._get_log_path()
-        if log_path.exists():
-            size = log_path.stat().st_size
-            if size > self._size_warning_threshold:
-                size_mb = size / (1024 * 1024)
-                logger.warning(
-                    f"Injection log file has grown to {size_mb:.1f}MB. "
-                    f"Consider cleaning up {log_path}. "
-                    f"Expected size: <10MB per 4-hour session."
-                )
-                self._size_warning_issued = True
 
     def log_injection(self, event: InjectionEvent) -> None:
         """Log a single injection event to the JSONL file.
@@ -359,10 +393,6 @@ class InjectionLogger:
             or event.source_file in self._by_source_file
         ):
             self._by_source_file[event.source_file] += 1
-
-        # Check file size periodically (every 100 injections)
-        if self._injection_count % 100 == 0:
-            self._check_file_size()
 
     def log_injections(self, events: List[InjectionEvent]) -> None:
         """Log multiple injection events to the JSONL file.
@@ -402,9 +432,6 @@ class InjectionLogger:
 
         # Flush after batch
         file_handle.flush()
-
-        # Check file size
-        self._check_file_size()
 
     def get_statistics(self, top_files_count: int = 5) -> InjectionStatistics:
         """Get injection statistics for session metrics.
@@ -476,7 +503,6 @@ class InjectionLogger:
         self._total_tokens = 0
         self._cache_hits = 0
         self._cache_misses = 0
-        self._size_warning_issued = False
 
     def __enter__(self) -> "InjectionLogger":
         """Context manager entry."""

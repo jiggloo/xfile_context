@@ -7,7 +7,10 @@ This module implements the MCP protocol layer (TDD Section 3.4.1) with ZERO busi
 All business logic is delegated to CrossFileContextService per DD-6 (layered architecture).
 """
 
+import argparse
 import logging
+import uuid
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -15,6 +18,7 @@ from mcp.server.session import ServerSession
 
 from xfile_context.cache import WorkingMemoryCache
 from xfile_context.config import Config
+from xfile_context.log_config import ensure_log_directories, get_default_data_root
 from xfile_context.service import CrossFileContextService
 from xfile_context.storage import InMemoryStore
 
@@ -39,17 +43,28 @@ class CrossFileContextMCPServer:
         self,
         config: Optional[Config] = None,
         service: Optional[CrossFileContextService] = None,
+        data_root: Optional[Path] = None,
+        session_id: Optional[str] = None,
     ):
         """Initialize MCP server.
 
         Args:
             config: Configuration object. If None, loads from default location.
             service: Service layer instance. If None, creates default service.
+            data_root: Root directory for log files. If None, uses ~/.cross_file_context/
+            session_id: Session ID for log filenames. If None, generates a UUID.
         """
         # Initialize configuration
         if config is None:
             config = Config()
         self.config = config
+
+        # Initialize data root and session ID (Issue #150)
+        self.data_root = data_root or get_default_data_root()
+        self.session_id = session_id or str(uuid.uuid4())
+
+        # Ensure log directories exist
+        ensure_log_directories(self.data_root)
 
         # Initialize service layer
         if service is None:
@@ -227,20 +242,58 @@ class CrossFileContextMCPServer:
         self.service.shutdown()
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments.
+
+    Returns:
+        Parsed arguments namespace.
+    """
+    parser = argparse.ArgumentParser(
+        description="Cross-File Context Links MCP Server",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=None,
+        help=(
+            "Root directory for log files (injections, warnings, session_metrics). "
+            f"Default: {get_default_data_root()}"
+        ),
+    )
+    parser.add_argument(
+        "--transport",
+        type=str,
+        choices=["stdio", "streamable-http", "sse"],
+        default="stdio",
+        help="Transport type for MCP server. Default: stdio",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
     """Main entry point for MCP server.
 
     Initializes logging and starts the server with stdio transport (Claude Code default).
+
+    Note: setup_logging() from logging_setup.py is NOT currently called here.
+    The MCP server uses basic logging configuration. See Issue #150 for details.
     """
+    # Parse command-line arguments
+    args = parse_args()
+
     # Setup logging
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    # Create and run server
-    server = CrossFileContextMCPServer()
-    server.run(transport="stdio")
+    # Create and run server with data_root from CLI
+    server = CrossFileContextMCPServer(data_root=args.data_root)
+    logger.info(
+        f"Starting MCP server with data_root={server.data_root}, session_id={server.session_id}"
+    )
+    server.run(transport=args.transport)
 
 
 if __name__ == "__main__":

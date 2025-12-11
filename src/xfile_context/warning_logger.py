@@ -6,15 +6,16 @@
 This module implements structured warning logging per TDD Section 3.9.5:
 - JSONL format (one JSON object per line)
 - Real-time logging with immediate flush
-- Log file size monitoring
+- Date-based file rotation for eventual immutability (Issue #150)
 - Warning statistics for session metrics
 
-Log Location: .cross_file_context_logs/warnings.jsonl
+Log Location: ~/.cross_file_context/warnings/<DATE>-<SESSION-ID>.jsonl
 
 Related Requirements:
 - FR-41 (structured warning log)
 - FR-44 (warning statistics in session metrics)
 - T-6.9 (warnings logged to structured format)
+- Issue #150 (logging architecture cleanup)
 """
 
 import json
@@ -24,17 +25,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TextIO
 
+from xfile_context.log_config import build_log_filename, get_current_utc_date, get_warnings_dir
 from xfile_context.warning_formatter import StructuredWarning
 
 logger = logging.getLogger(__name__)
 
-# Default log directory name
+# Legacy default log directory name (for backwards compatibility in tests)
 DEFAULT_LOG_DIR = ".cross_file_context_logs"
 
-# Default warning log filename
+# Legacy default warning log filename (for backwards compatibility in tests)
 DEFAULT_WARNING_LOG_FILE = "warnings.jsonl"
 
-# Size threshold for warning about large log files (10MB per TDD 3.9.5)
+# Legacy size threshold constant (kept for backwards compatibility in tests)
+# Note: Size warnings are no longer issued per Issue #150, but this constant
+# remains for test compatibility
 LOG_SIZE_WARNING_THRESHOLD_BYTES = 10 * 1024 * 1024  # 10MB
 
 
@@ -76,11 +80,11 @@ class WarningLogger:
     Features:
     - JSONL format (one JSON object per line)
     - Immediate flush after each write
-    - Log file size monitoring with warnings
+    - Date-based file rotation for eventual immutability (Issue #150)
     - Warning statistics generation for session metrics
 
     Usage:
-        logger = WarningLogger()
+        logger = WarningLogger(session_id="abc-123")
         logger.log_warning(structured_warning)
         # Or log multiple at once
         logger.log_warnings(list_of_warnings)
@@ -90,7 +94,7 @@ class WarningLogger:
         logger.close()
 
     Context manager usage:
-        with WarningLogger() as logger:
+        with WarningLogger(session_id="abc-123") as logger:
             logger.log_warning(warning)
     """
 
@@ -100,36 +104,64 @@ class WarningLogger:
         log_file: Optional[str] = None,
         size_warning_threshold: int = LOG_SIZE_WARNING_THRESHOLD_BYTES,
         max_unique_files_tracked: int = 10000,
+        session_id: Optional[str] = None,
+        data_root: Optional[Path] = None,
     ) -> None:
         """Initialize the warning logger.
 
         Args:
-            log_dir: Directory for log files. If None, uses current working
-                    directory + .cross_file_context_logs/
-            log_file: Log filename. If None, uses warnings.jsonl.
-                     Must be a simple filename without path separators.
-            size_warning_threshold: File size in bytes at which to warn about
-                                   large log files. Default is 10MB.
+            log_dir: Directory for log files. If None and data_root is None,
+                    uses ~/.cross_file_context/warnings/.
+                    DEPRECATED: Use data_root instead.
+            log_file: Log filename. If None, uses date-session pattern.
+                     DEPRECATED: Filename is auto-generated from session_id.
+            size_warning_threshold: DEPRECATED - no longer used per Issue #150.
+                                   Kept for backwards compatibility.
             max_unique_files_tracked: Maximum number of unique files to track
                                      in statistics. Prevents memory exhaustion.
                                      Default is 10000.
+            session_id: Session ID for log filename. Required for new architecture.
+                       If None, falls back to legacy static filename.
+            data_root: Root directory for logs. If provided, uses
+                      {data_root}/warnings/ as log directory.
 
         Raises:
             ValueError: If log_file contains path separators.
         """
-        if log_dir is None:
-            log_dir = Path.cwd() / DEFAULT_LOG_DIR
-        self._log_dir = Path(log_dir)
+        # size_warning_threshold is ignored per Issue #150 (no size limits)
+        _ = size_warning_threshold
+        # Determine log directory
+        if data_root is not None:
+            # New architecture: use {data_root}/warnings/
+            self._log_dir = get_warnings_dir(data_root)
+        elif log_dir is not None:
+            # Legacy: explicit log_dir provided
+            self._log_dir = Path(log_dir)
+        else:
+            # New default: ~/.cross_file_context/warnings/
+            self._log_dir = get_warnings_dir()
 
-        # Validate log_file doesn't contain path components (security)
-        # Check for /, \, and : (Windows drive letters) to prevent path traversal
-        log_file = log_file or DEFAULT_WARNING_LOG_FILE
-        if "/" in log_file or "\\" in log_file or ":" in log_file:
-            raise ValueError(f"log_file must be a filename only, not a path: {log_file}")
-        self._log_file = log_file
+        # Determine log filename
+        self._session_id = session_id
+        if log_file is not None:
+            # Legacy: explicit filename provided
+            if "/" in log_file or "\\" in log_file or ":" in log_file:
+                raise ValueError(f"log_file must be a filename only, not a path: {log_file}")
+            self._log_file = log_file
+            self._use_date_rotation = False
+        elif session_id is not None:
+            # New architecture: date-session filename
+            self._log_file = build_log_filename(session_id)
+            self._use_date_rotation = True
+        else:
+            # Fallback to legacy static filename
+            self._log_file = DEFAULT_WARNING_LOG_FILE
+            self._use_date_rotation = False
 
-        self._size_warning_threshold = size_warning_threshold
         self._max_unique_files_tracked = max_unique_files_tracked
+
+        # Track current date for rotation
+        self._current_date = get_current_utc_date()
 
         # Statistics tracking
         self._warning_count = 0
@@ -138,7 +170,6 @@ class WarningLogger:
 
         # File handle (lazy initialization)
         self._file_handle: Optional[TextIO] = None
-        self._size_warning_issued = False
 
     def _ensure_log_dir(self) -> None:
         """Create log directory if it doesn't exist."""
@@ -152,12 +183,33 @@ class WarningLogger:
         """
         return self._log_dir / self._log_file
 
+    def _check_date_rotation(self) -> None:
+        """Check if date has changed and rotate file if needed.
+
+        Per Issue #150: Log files are split by UTC date for eventual immutability.
+        """
+        if not self._use_date_rotation:
+            return
+
+        current_date = get_current_utc_date()
+        if current_date != self._current_date:
+            # Date has changed - close current file and update filename
+            if self._file_handle is not None:
+                self._file_handle.close()
+                self._file_handle = None
+                logger.debug(f"Rotated warning log: {self._current_date} -> {current_date}")
+            self._current_date = current_date
+            self._log_file = build_log_filename(self._session_id)  # type: ignore[arg-type]
+
     def _open_file(self) -> TextIO:
         """Open or get the file handle for writing.
 
         Returns:
             File handle open for appending.
         """
+        # Check for date rotation before opening
+        self._check_date_rotation()
+
         if self._file_handle is None:
             self._ensure_log_dir()
             log_path = self._get_log_path()
@@ -165,26 +217,6 @@ class WarningLogger:
             self._file_handle = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
             logger.debug(f"Opened warning log file: {log_path}")
         return self._file_handle
-
-    def _check_file_size(self) -> None:
-        """Check log file size and warn if exceeds threshold.
-
-        Per TDD Section 3.9.5: If file grows >10MB, warn user.
-        """
-        if self._size_warning_issued:
-            return
-
-        log_path = self._get_log_path()
-        if log_path.exists():
-            size = log_path.stat().st_size
-            if size > self._size_warning_threshold:
-                size_mb = size / (1024 * 1024)
-                logger.warning(
-                    f"Warning log file has grown to {size_mb:.1f}MB. "
-                    f"Consider cleaning up {log_path} or enabling warning suppression. "
-                    f"See TDD Section 3.9.4 for suppression configuration."
-                )
-                self._size_warning_issued = True
 
     def log_warning(self, warning: StructuredWarning) -> None:
         """Log a single warning to the JSONL file.
@@ -207,10 +239,6 @@ class WarningLogger:
         # Only track file stats up to limit to prevent memory exhaustion
         if len(self._by_file) < self._max_unique_files_tracked or warning.file in self._by_file:
             self._by_file[warning.file] += 1
-
-        # Check file size periodically (every 100 warnings)
-        if self._warning_count % 100 == 0:
-            self._check_file_size()
 
     def log_warnings(self, warnings: List[StructuredWarning]) -> None:
         """Log multiple warnings to the JSONL file.
@@ -240,9 +268,6 @@ class WarningLogger:
 
         # Flush after batch
         file_handle.flush()
-
-        # Check file size
-        self._check_file_size()
 
     def get_statistics(self, top_files_count: int = 5) -> WarningStatistics:
         """Get warning statistics for session metrics.
@@ -309,7 +334,6 @@ class WarningLogger:
         self._warning_count = 0
         self._by_type.clear()
         self._by_file.clear()
-        self._size_warning_issued = False
 
     def __enter__(self) -> "WarningLogger":
         """Context manager entry."""

@@ -644,8 +644,8 @@ class TestMetricsCollector:
         log_path = collector.get_log_path()
         assert log_path.exists()
 
-    def test_multiple_sessions_append(self, temp_dir: Path) -> None:
-        """Multiple sessions should append to same file."""
+    def test_multiple_sessions_separate_files(self, temp_dir: Path) -> None:
+        """Multiple sessions create separate files per Issue #150."""
         # First session
         collector1 = MetricsCollector(log_dir=temp_dir, session_id="session-1")
         metrics1 = collector1.build_session_metrics()
@@ -656,15 +656,18 @@ class TestMetricsCollector:
         metrics2 = collector2.build_session_metrics()
         collector2.write_metrics(metrics2)
 
-        # Verify both sessions in file
-        log_path = collector1.get_log_path()
-        with open(log_path) as f:
-            lines = f.readlines()
-            assert len(lines) == 2
+        # Verify each session has its own file
+        log_path1 = collector1.get_log_path()
+        log_path2 = collector2.get_log_path()
+        assert log_path1 != log_path2, "Each session should have its own file"
 
-            data1 = json.loads(lines[0])
-            data2 = json.loads(lines[1])
+        # Verify each file has one entry with correct session ID
+        with open(log_path1) as f:
+            data1 = json.loads(f.readline())
             assert data1["session_id"] == "session-1"
+
+        with open(log_path2) as f:
+            data2 = json.loads(f.readline())
             assert data2["session_id"] == "session-2"
 
 
@@ -706,17 +709,20 @@ class TestReadSessionMetrics:
         assert result[0].configuration["cache_size_limit_kb"] == 50
 
     def test_read_multiple_sessions(self, temp_dir: Path) -> None:
-        """Reading multiple sessions should work correctly."""
-        log_path = temp_dir / "session_metrics.jsonl"
-
-        # Write multiple sessions
+        """Reading multiple sessions from separate files per Issue #150."""
+        # Write multiple sessions - each creates its own file
+        collectors = []
         for i in range(3):
             collector = MetricsCollector(log_dir=temp_dir, session_id=f"session-{i}")
             metrics = collector.build_session_metrics()
             collector.write_metrics(metrics)
+            collectors.append(collector)
 
-        # Read all
-        result = read_session_metrics(log_path)
+        # Read each session from its own file
+        result = []
+        for collector in collectors:
+            sessions = read_session_metrics(collector.get_log_path())
+            result.extend(sessions)
 
         assert len(result) == 3
         assert result[0].session_id == "session-0"
@@ -724,12 +730,19 @@ class TestReadSessionMetrics:
         assert result[2].session_id == "session-2"
 
     def test_read_with_limit(self, temp_dir: Path) -> None:
-        """Reading with limit should respect limit."""
+        """Reading with limit should respect limit.
+
+        Per Issue #150, each session has its own file. This test verifies
+        that the limit parameter still works when reading from a single file.
+        """
+        # Use explicit log_file to write multiple entries to same file for this test
         log_path = temp_dir / "session_metrics.jsonl"
 
-        # Write multiple sessions
+        # Write multiple sessions to the same explicit file
         for i in range(5):
-            collector = MetricsCollector(log_dir=temp_dir, session_id=f"session-{i}")
+            collector = MetricsCollector(
+                log_dir=temp_dir, log_file="session_metrics.jsonl", session_id=f"session-{i}"
+            )
             metrics = collector.build_session_metrics()
             collector.write_metrics(metrics)
 
@@ -742,8 +755,6 @@ class TestReadSessionMetrics:
 
     def test_read_with_nested_metrics(self, temp_dir: Path) -> None:
         """Reading should correctly parse nested metrics."""
-        log_path = temp_dir / "session_metrics.jsonl"
-
         # Create metrics with nested data
         collector = MetricsCollector(log_dir=temp_dir, session_id="nested-test")
         collector.record_injection_token_count(100)
@@ -782,8 +793,8 @@ class TestReadSessionMetrics:
             graph=mock_graph,
         )
 
-        # Read back
-        result = read_session_metrics(log_path)
+        # Read back from the collector's actual log path
+        result = read_session_metrics(collector.get_log_path())
 
         assert len(result) == 1
         session = result[0]
