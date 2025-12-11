@@ -109,8 +109,14 @@ class CrossFileContextMCPServer:
         ) -> Dict[str, Any]:
             """Read a Python file with automatic cross-file context injection.
 
-            This tool reads a file and injects relevant context from related files
-            (imports, function calls, class inheritance) to help understand the code.
+            IMPORTANT: This is the PREFERRED tool for reading Python files. Use this
+            tool instead of the standard Read tool when working with Python code.
+            It automatically provides cross-file context that helps understand
+            how the code relates to the rest of the codebase.
+
+            This tool reads a Python file and injects relevant context from related
+            files (imports, function calls, class inheritance) to help understand
+            the code in its broader context.
 
             Args:
                 file_path: Absolute or relative path to the Python file to read
@@ -119,7 +125,7 @@ class CrossFileContextMCPServer:
             Returns:
                 Dictionary with:
                 - file_path: The path that was read
-                - content: File content with injected context
+                - content: File content with injected cross-file context
                 - warnings: List of any warnings (empty list if none)
 
             Raises:
@@ -159,18 +165,24 @@ class CrossFileContextMCPServer:
         async def get_relationship_graph(
             ctx: Context[ServerSession, None],
         ) -> Dict[str, Any]:
-            """Export the complete relationship graph for the codebase.
+            """Export the current relationship graph for files analyzed so far.
 
-            Returns the full graph of file relationships including imports,
-            function calls, and class inheritance.
+            NOTE: This returns an INCREMENTAL graph containing only relationships
+            for files that have been read during this session. The graph grows
+            as more files are read using read_with_context(). This is expected
+            behavior by design - the system builds context incrementally rather
+            than scanning the entire codebase upfront.
+
+            Returns relationships including imports, function calls, and class
+            inheritance for the files that have been analyzed.
 
             Args:
                 ctx: MCP context for logging and progress
 
             Returns:
                 Dictionary with:
-                - nodes: List of file nodes
-                - relationships: List of relationships between files
+                - nodes: List of file nodes (for files read so far)
+                - relationships: List of relationships between analyzed files
                 - metadata: Graph metadata (timestamp, counts)
             """
             await ctx.info("Exporting relationship graph")
