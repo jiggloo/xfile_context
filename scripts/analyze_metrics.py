@@ -14,7 +14,7 @@ Features:
 - Human-readable report output
 
 Usage:
-    python scripts/analyze_metrics.py .xfile_context/session_metrics.jsonl
+    python scripts/analyze_metrics.py ~/.cross_file_context/session_metrics/*.jsonl
     python scripts/analyze_metrics.py path/to/metrics1.jsonl path/to/metrics2.jsonl
 
 Related Requirements:
@@ -740,8 +740,8 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python analyze_metrics.py .cross_file_context_logs/session_metrics.jsonl
-    python analyze_metrics.py metrics1.jsonl metrics2.jsonl
+    python analyze_metrics.py ~/.cross_file_context/session_metrics/*.jsonl
+    python analyze_metrics.py path/to/metrics1.jsonl path/to/metrics2.jsonl
         """,
     )
     parser.add_argument(
