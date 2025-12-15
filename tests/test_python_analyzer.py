@@ -5,6 +5,8 @@
 
 import ast
 
+import pytest
+
 from xfile_context.analyzers import PythonAnalyzer
 from xfile_context.detectors import DetectorRegistry, RelationshipDetector
 from xfile_context.models import Relationship, RelationshipGraph, RelationshipType
@@ -146,6 +148,7 @@ class TestPythonAnalyzer:
         assert result is False
         assert len(graph.get_all_relationships()) == 0
 
+    @pytest.mark.extended
     def test_file_within_size_limit(self, tmp_path):
         """Test file within size limit is processed."""
         # Create file within limit
@@ -166,6 +169,7 @@ class TestPythonAnalyzer:
         assert result is True
         assert len(graph.get_all_relationships()) == 1
 
+    @pytest.mark.extended
     def test_detector_exception_recovery(self, tmp_path):
         """Test partial analysis when detector fails."""
         # Create test file
@@ -186,6 +190,7 @@ class TestPythonAnalyzer:
         # Should have results from SimpleImportDetector despite FailingDetector exception
         assert len(graph.get_all_relationships()) == 2
 
+    @pytest.mark.extended
     def test_empty_file(self, tmp_path):
         """Test analyzing empty file."""
         test_file = tmp_path / "empty.py"
@@ -200,6 +205,7 @@ class TestPythonAnalyzer:
         assert result is True
         assert len(graph.get_all_relationships()) == 0
 
+    @pytest.mark.extended
     def test_multiple_detectors_priority_order(self, tmp_path):
         """Test that detectors are invoked in priority order."""
         test_file = tmp_path / "test.py"
@@ -250,6 +256,7 @@ class TestPythonAnalyzer:
         assert "high" in high_detector.invocation_order
         assert "low" in high_detector.invocation_order
 
+    @pytest.mark.extended
     def test_incremental_update_removes_old_relationships(self, tmp_path):
         """Test that re-analyzing a file removes old relationships."""
         test_file = tmp_path / "test.py"
@@ -279,6 +286,7 @@ class TestPythonAnalyzer:
         assert "json" in import_targets
         assert "os" not in import_targets
 
+    @pytest.mark.extended
     def test_file_metadata_updated(self, tmp_path):
         """Test that file metadata is updated after analysis."""
         test_file = tmp_path / "test.py"
@@ -298,6 +306,7 @@ class TestPythonAnalyzer:
         assert metadata.is_unparseable is False
         assert metadata.last_analyzed > 0
 
+    @pytest.mark.extended
     def test_recursion_depth_limit(self, tmp_path):
         """Test AST traversal recursion depth limit.
 
