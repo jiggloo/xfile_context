@@ -356,7 +356,8 @@ class MetricsCollector:
     Context manager usage:
         with MetricsCollector(session_id="abc-123") as collector:
             # ... session operations ...
-        # Metrics automatically written on exit
+            collector.finalize_and_write()  # Must be called explicitly
+        # Note: Metrics are NOT automatically written on exit
     """
 
     def __init__(
