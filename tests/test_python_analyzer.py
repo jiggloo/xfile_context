@@ -310,6 +310,10 @@ class TestPythonAnalyzer:
     def test_recursion_depth_limit(self, tmp_path):
         """Test AST traversal recursion depth limit.
 
+        This is a secondary DoS defense mechanism. The primary defense is file
+        size limits (test_file_size_limit). This test validates graceful handling
+        of deeply nested structures that bypass size limits.
+
         Note: Python's AST parser has version-specific limits. Older versions
         (3.8) fail on deeply nested expressions, while newer versions handle
         them better. This test verifies graceful handling regardless of result.
