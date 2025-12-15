@@ -40,7 +40,7 @@ This project uses pre-commit hooks to ensure code quality. The hooks will automa
 - **isort**: Import statement organizer
 - **ruff**: Fast Python linter
 - **mypy**: Static type checker (strict mode for src/, lenient for tests/)
-- **pytest**: Fast unit tests only (excludes tests marked with `@pytest.mark.slow`, `@pytest.mark.integration`, or `@pytest.mark.performance`)
+- **pytest**: Fast unit tests only (excludes tests marked with `@pytest.mark.slow`, `@pytest.mark.integration`, `@pytest.mark.performance`, or `@pytest.mark.extended`)
 
 To manually run all hooks on all files:
 ```bash
@@ -58,7 +58,7 @@ Tests are split into two categories for optimal development workflow:
 
 **Fast unit tests** (runs in pre-commit, ~1.2 minutes):
 ```bash
-pytest -m "not slow and not integration and not performance"
+pytest -m "not slow and not integration and not performance and not extended"
 ```
 
 **Full test suite** (includes functional/integration tests, ~5.5 minutes):
@@ -70,6 +70,17 @@ pytest
 ```bash
 pytest -m slow
 ```
+
+**Only extended tests** (comprehensive/redundant tests excluded from pre-commit):
+```bash
+pytest -m extended
+```
+
+**Test Markers Reference**:
+- `@pytest.mark.slow`: Time-consuming tests (deselected during pre-commit)
+- `@pytest.mark.integration`: Tests requiring external resources or file system operations
+- `@pytest.mark.performance`: Tests measuring timing characteristics
+- `@pytest.mark.extended`: Comprehensive tests providing redundant coverage (CI-only, excluded from pre-commit to improve speed)
 
 **Parallel execution** (faster):
 ```bash

@@ -11,6 +11,8 @@ Tests the intermediate data model for AST-parsed data:
 
 import time
 
+import pytest
+
 from xfile_context.models import (
     FileSymbolData,
     ReferenceType,
@@ -23,6 +25,7 @@ from xfile_context.models import (
 class TestSymbolDefinition:
     """Tests for SymbolDefinition model."""
 
+    @pytest.mark.extended
     def test_basic_function_definition(self):
         """Test creating a function definition."""
         defn = SymbolDefinition(
@@ -38,6 +41,7 @@ class TestSymbolDefinition:
         assert defn.line_end == 20
         assert defn.signature == "def my_function(a, b):"
 
+    @pytest.mark.extended
     def test_class_definition_with_bases(self):
         """Test creating a class definition with base classes."""
         defn = SymbolDefinition(
@@ -53,6 +57,7 @@ class TestSymbolDefinition:
         assert defn.bases == ["BaseClass", "Mixin"]
         assert defn.decorators == ["dataclass"]
 
+    @pytest.mark.extended
     def test_method_definition(self):
         """Test creating a method definition with parent class."""
         defn = SymbolDefinition(
@@ -102,6 +107,7 @@ class TestSymbolDefinition:
         assert data["docstring"] == "A sample class"
         assert "parent_class" not in data  # None values excluded
 
+    @pytest.mark.extended
     def test_from_dict_minimal(self):
         """Test deserialization with minimal data."""
         data = {
@@ -142,6 +148,7 @@ class TestSymbolDefinition:
 class TestSymbolReference:
     """Tests for SymbolReference model."""
 
+    @pytest.mark.extended
     def test_import_reference(self):
         """Test creating an import reference."""
         ref = SymbolReference(
@@ -156,6 +163,7 @@ class TestSymbolReference:
         assert ref.reference_type == ReferenceType.IMPORT
         assert ref.resolved_module == "<stdlib:os>"
 
+    @pytest.mark.extended
     def test_from_import_reference(self):
         """Test creating a 'from module import name' reference."""
         ref = SymbolReference(
@@ -171,6 +179,7 @@ class TestSymbolReference:
         assert ref.module_name == "pathlib"
         assert ref.is_relative is False
 
+    @pytest.mark.extended
     def test_relative_import_reference(self):
         """Test creating a relative import reference."""
         ref = SymbolReference(
@@ -186,6 +195,7 @@ class TestSymbolReference:
         assert ref.is_relative is True
         assert ref.relative_level == 1
 
+    @pytest.mark.extended
     def test_function_call_reference(self):
         """Test creating a function call reference."""
         ref = SymbolReference(
@@ -201,6 +211,7 @@ class TestSymbolReference:
         assert ref.caller_context == "main"
         assert ref.is_method_call is False
 
+    @pytest.mark.extended
     def test_class_reference(self):
         """Test creating a class inheritance reference."""
         ref = SymbolReference(
@@ -214,6 +225,7 @@ class TestSymbolReference:
         assert ref.reference_type == ReferenceType.CLASS_REFERENCE
         assert ref.metadata["child_class"] == "MyClass"
 
+    @pytest.mark.extended
     def test_aliased_import(self):
         """Test import with alias."""
         ref = SymbolReference(
@@ -229,6 +241,7 @@ class TestSymbolReference:
         assert ref.alias == "np"
         assert ref.resolved_symbol == "numpy"
 
+    @pytest.mark.extended
     def test_wildcard_import(self):
         """Test wildcard import reference."""
         ref = SymbolReference(
@@ -309,6 +322,7 @@ class TestSymbolReference:
 class TestFileSymbolData:
     """Tests for FileSymbolData model."""
 
+    @pytest.mark.extended
     def test_basic_instantiation(self):
         """Test creating a FileSymbolData instance."""
         data = FileSymbolData(
@@ -322,6 +336,7 @@ class TestFileSymbolData:
         assert data.references == []
         assert data.is_valid is True
 
+    @pytest.mark.extended
     def test_with_definitions_and_references(self):
         """Test FileSymbolData with definitions and references."""
         func_def = SymbolDefinition(
@@ -348,6 +363,7 @@ class TestFileSymbolData:
         assert data.definitions[0].name == "my_func"
         assert data.references[0].name == "os"
 
+    @pytest.mark.extended
     def test_get_definition_found(self):
         """Test looking up a definition by name."""
         class_def = SymbolDefinition(
@@ -367,6 +383,7 @@ class TestFileSymbolData:
         assert result is not None
         assert result.name == "MyClass"
 
+    @pytest.mark.extended
     def test_get_definition_not_found(self):
         """Test looking up a non-existent definition."""
         data = FileSymbolData(
@@ -379,6 +396,7 @@ class TestFileSymbolData:
         result = data.get_definition("NonExistent")
         assert result is None
 
+    @pytest.mark.extended
     def test_get_definitions_by_type(self):
         """Test filtering definitions by type."""
         func1 = SymbolDefinition(
@@ -404,6 +422,7 @@ class TestFileSymbolData:
         classes = data.get_definitions_by_type(SymbolType.CLASS)
         assert len(classes) == 1
 
+    @pytest.mark.extended
     def test_get_references_by_type(self):
         """Test filtering references by type."""
         import_ref = SymbolReference(name="os", reference_type=ReferenceType.IMPORT, line_number=1)
@@ -424,6 +443,7 @@ class TestFileSymbolData:
         calls = data.get_references_by_type(ReferenceType.FUNCTION_CALL)
         assert len(calls) == 1
 
+    @pytest.mark.extended
     def test_get_import_references(self):
         """Test getting all import references."""
         import1 = SymbolReference(name="os", reference_type=ReferenceType.IMPORT, line_number=1)
@@ -442,6 +462,7 @@ class TestFileSymbolData:
         imports = data.get_import_references()
         assert len(imports) == 2
 
+    @pytest.mark.extended
     def test_invalid_file(self):
         """Test marking a file as invalid (syntax error)."""
         data = FileSymbolData(
@@ -456,6 +477,7 @@ class TestFileSymbolData:
         assert data.is_valid is False
         assert data.error_message == "SyntaxError at line 5"
 
+    @pytest.mark.extended
     def test_dynamic_patterns(self):
         """Test tracking dynamic patterns."""
         data = FileSymbolData(

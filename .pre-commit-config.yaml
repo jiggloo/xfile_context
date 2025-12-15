@@ -53,6 +53,6 @@ repos:
         name: pytest (fast tests only, parallel)
         entry: pytest
         language: system
-        args: [-n, "2", --dist=loadfile, -m, "not slow and not integration and not performance", --tb=short]
+        args: [-n, "2", --dist=loadfile, -m, "not slow and not integration and not performance and not extended", --tb=short]
         pass_filenames: false
         types: [python]
