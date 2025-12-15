@@ -5,9 +5,14 @@
 
 This module implements the MCP protocol layer (TDD Section 3.4.1) with ZERO business logic.
 All business logic is delegated to CrossFileContextService per DD-6 (layered architecture).
+
+Per Issue #155: Implements graceful shutdown handling to ensure session metrics are
+written even when the MCP server terminates without explicit shutdown (e.g., when
+Claude Code closes the stdio connection).
 """
 
 import argparse
+import atexit
 import logging
 import uuid
 from pathlib import Path
@@ -91,6 +96,9 @@ class CrossFileContextMCPServer:
 
         # Register tools
         self._register_tools()
+
+        # Track shutdown state (Issue #155)
+        self._shutdown_called = False
 
         logger.info("CrossFileContextMCPServer initialized")
 
@@ -251,8 +259,18 @@ class CrossFileContextMCPServer:
         self.mcp.run(transport=transport)  # type: ignore[arg-type]
 
     def shutdown(self) -> None:
-        """Shutdown the MCP server and cleanup resources."""
+        """Shutdown the MCP server and cleanup resources.
+
+        Idempotent: safe to call multiple times. Per Issue #155, this ensures
+        session metrics are written even on abrupt termination.
+        """
+        # Idempotent: skip if already shutdown (Issue #155)
+        if self._shutdown_called:
+            logger.debug("MCP server shutdown already called, skipping")
+            return
+
         logger.info("Shutting down MCP server")
+        self._shutdown_called = True
         self.service.shutdown()
 
 
@@ -289,6 +307,8 @@ def main() -> None:
     """Main entry point for MCP server.
 
     Initializes logging and starts the server with stdio transport (Claude Code default).
+    Per Issue #155: Registers atexit handler to ensure session metrics are written
+    even when the server terminates without explicit shutdown.
 
     Note: setup_logging() from logging_setup.py is NOT currently called here.
     The MCP server uses basic logging configuration. See Issue #150 for details.
@@ -302,8 +322,14 @@ def main() -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    # Create and run server with data_root from CLI
+    # Create server with data_root from CLI
     server = CrossFileContextMCPServer(data_root=args.data_root)
+
+    # Register atexit handler to ensure graceful shutdown (Issue #155)
+    # This ensures session metrics are written even if the process terminates
+    # abruptly (e.g., when Claude Code closes the stdio connection)
+    atexit.register(server.shutdown)
+
     logger.info(
         f"Starting MCP server with data_root={server.data_root}, session_id={server.session_id}"
     )

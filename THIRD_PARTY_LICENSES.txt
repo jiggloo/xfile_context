@@ -194,11 +194,25 @@ Author: Jukka Lehtosalo <jukka.lehtosalo@iki.fi>, Ivan Levkivskyi <levkivskyi@gm
 URL: https://github.com/mypyc/librt
 --------------------------------------------------------------------------------
 
+Package: markdown-it-py
+Version: 4.0.0
+License: MIT License
+Author: Chris Sewell <chrisj_sewell@hotmail.com>
+URL: https://github.com/executablebooks/markdown-it-py
+--------------------------------------------------------------------------------
+
 Package: mcp
 Version: 1.23.1
 License: MIT License
 Author: Anthropic, PBC.
 URL: https://modelcontextprotocol.io
+--------------------------------------------------------------------------------
+
+Package: mdurl
+Version: 0.1.2
+License: MIT License
+Author: Taneli Hukkinen <hukkin@users.noreply.github.com>
+URL: https://github.com/executablebooks/mdurl
 --------------------------------------------------------------------------------
 
 Package: mypy
@@ -376,6 +390,13 @@ Author: Kenneth Reitz
 URL: https://requests.readthedocs.io
 --------------------------------------------------------------------------------
 
+Package: rich
+Version: 14.2.0
+License: MIT License
+Author: Will McGugan
+URL: https://github.com/Textualize/rich
+--------------------------------------------------------------------------------
+
 Package: rpds-py
 Version: 0.30.0
 License: MIT
@@ -388,6 +409,13 @@ Version: 0.14.7
 License: MIT License
 Author: "Astral Software Inc." <hey@astral.sh>
 URL: https://docs.astral.sh/ruff
+--------------------------------------------------------------------------------
+
+Package: shellingham
+Version: 1.5.4
+License: ISC License (ISCL)
+Author: Tzu-ping Chung
+URL: https://github.com/sarugaku/shellingham
 --------------------------------------------------------------------------------
 
 Package: sse-starlette
@@ -432,6 +460,13 @@ Author: Shantanu Jain
 URL: https://github.com/openai/tiktoken
 --------------------------------------------------------------------------------
 
+Package: typer
+Version: 0.20.0
+License: MIT License
+Author: =?utf-8?q?Sebasti=C3=A1n_Ram=C3=ADrez?= <tiangolo@gmail.com>
+URL: https://github.com/fastapi/typer
+--------------------------------------------------------------------------------
+
 Package: types-PyYAML
 Version: 6.0.12.20250915
 License: Apache-2.0
@@ -458,6 +493,13 @@ Version: 2.5.0
 License: MIT
 Author: Andrey Petrov <andrey.petrov@shazow.net>
 URL: https://github.com/urllib3/urllib3/blob/main/CHANGES.rst
+--------------------------------------------------------------------------------
+
+Package: uv
+Version: 0.9.15
+License: Apache Software License; MIT License
+Author: "Astral Software Inc." <hey@astral.sh>
+URL: https://pypi.org/project/uv/
 --------------------------------------------------------------------------------
 
 Package: uvicorn

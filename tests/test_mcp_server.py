@@ -455,3 +455,56 @@ class TestMainEntryPoint:
         from xfile_context.mcp_server import main
 
         assert callable(main)
+
+
+class TestServerShutdown:
+    """Tests for MCP server shutdown handling (Issue #155)."""
+
+    def test_shutdown_is_idempotent(self):
+        """shutdown() should be safe to call multiple times (Issue #155)."""
+        server = CrossFileContextMCPServer()
+
+        # First shutdown should work
+        server.shutdown()
+        assert server._shutdown_called
+
+        # Second shutdown should not raise or re-run shutdown logic
+        server.shutdown()  # Should not raise
+
+    def test_shutdown_calls_service_shutdown(self):
+        """shutdown() should call service.shutdown() (Issue #155)."""
+        from unittest.mock import Mock
+
+        server = CrossFileContextMCPServer()
+        server.service.shutdown = Mock()
+
+        server.shutdown()
+
+        server.service.shutdown.assert_called_once()
+
+    def test_shutdown_only_calls_service_once(self):
+        """shutdown() should only call service.shutdown() once (Issue #155)."""
+        from unittest.mock import Mock
+
+        server = CrossFileContextMCPServer()
+        server.service.shutdown = Mock()
+
+        # Call shutdown multiple times
+        server.shutdown()
+        server.shutdown()
+        server.shutdown()
+
+        # Service shutdown should only be called once
+        server.service.shutdown.assert_called_once()
+
+    def test_shutdown_called_initially_false(self):
+        """_shutdown_called should be False initially (Issue #155)."""
+        server = CrossFileContextMCPServer()
+        assert not server._shutdown_called
+
+    def test_atexit_module_imported(self):
+        """atexit module should be imported for shutdown handler (Issue #155)."""
+        import xfile_context.mcp_server as mcp_module
+
+        # Verify atexit is imported in the module
+        assert hasattr(mcp_module, "atexit") or "atexit" in dir(mcp_module)
