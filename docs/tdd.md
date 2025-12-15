@@ -4111,11 +4111,20 @@ This section describes the metrics collection and logging infrastructure that en
 
 **Purpose** (FR-43, FR-44): Collect comprehensive session-level metrics to enable data-driven tuning of thresholds (cache expiry, token limits, etc.) as described in PRD Section 7.2.
 
-**Emission Timing**: Metrics written at end of session (MCP server shutdown or explicit trigger)
+**Emission Timing**:
+- **Final metrics**: Written at end of session (MCP server shutdown or explicit trigger)
+- **Intermediate metrics**: Optionally written periodically during session via `flush_intermediate()` to capture data even if process terminates unexpectedly
+- **Graceful shutdown** (Issue #155): MCP server registers `atexit` handler to ensure metrics are written even when stdio transport closes abruptly
+
+**Flush Type Field**: Each metrics entry includes a `flush_type` field:
+- `"final"`: Session end metrics (written by `finalize_and_write()`)
+- `"intermediate"`: Periodic flush during session (written by `flush_intermediate()`)
 
 **Log Format** (FR-45): JSONL (JSON Lines)
 
-**Log Location**: `.cross_file_context_logs/session_metrics.jsonl`
+**Log Location** (Issue #150): `~/.cross_file_context/session_metrics/<DATE>-<SESSION-ID>.jsonl`
+- Date-based file rotation for eventual immutability
+- Each session writes to its own file
 
 **Metrics Structure** (FR-46):
 
