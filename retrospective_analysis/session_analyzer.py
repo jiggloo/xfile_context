@@ -27,6 +27,10 @@ class ToolCall:
     is_error: bool = False
     is_empty: bool = False
 
+    def get_file_path(self) -> Optional[str]:
+        """Get file path if this is a file read operation."""
+        return self.inputs.get("file_path")
+
     def elapsed_ms(self, other: "ToolCall") -> float:
         """Calculate milliseconds between this and another tool call."""
         delta = other.timestamp - self.timestamp
@@ -206,14 +210,96 @@ class SessionAnalyzer:
 
         return metrics
 
-    def generate_report(self) -> str:
-        """Generate a comprehensive analysis report."""
+    def analyze_mcp_tool_usage(self, file_extensions: List[str] = None) -> Dict:
+        """Analyze MCP tool usage for specific file types.
+
+        Args:
+            file_extensions: List of file extensions to check (e.g., ['.py']).
+                           If None, defaults to ['.py'] for Python files.
+
+        Returns:
+            Dict with MCP tool usage analysis including:
+            - Files read via default Read tool
+            - Files read via MCP xfile_context tool
+            - Compliance rate (percentage using MCP tool)
+            - Details of files read incorrectly
+        """
+        if file_extensions is None:
+            file_extensions = [".py"]
+
+        # Find all read operations for target file types
+        mcp_read_tool = "mcp__xfile_context__read_with_context"
+        default_read_tool = "Read"
+
+        # Track reads by file and tool type
+        default_reads: Dict[str, List[ToolCall]] = defaultdict(list)
+        mcp_reads: Dict[str, List[ToolCall]] = defaultdict(list)
+
+        for tc in self.tool_calls:
+            file_path = tc.get_file_path()
+            if not file_path:
+                continue
+
+            # Check if file has one of the target extensions
+            is_target_file = any(file_path.endswith(ext) for ext in file_extensions)
+            if not is_target_file:
+                continue
+
+            if tc.tool_name == default_read_tool:
+                default_reads[file_path].append(tc)
+            elif tc.tool_name == mcp_read_tool:
+                mcp_reads[file_path].append(tc)
+
+        # Calculate metrics
+        all_target_files = set(default_reads.keys()) | set(mcp_reads.keys())
+        total_reads = sum(len(reads) for reads in default_reads.values()) + sum(
+            len(reads) for reads in mcp_reads.values()
+        )
+        mcp_read_count = sum(len(reads) for reads in mcp_reads.values())
+        default_read_count = sum(len(reads) for reads in default_reads.values())
+
+        compliance_rate = (mcp_read_count / total_reads * 100) if total_reads > 0 else 100.0
+
+        # Files that should have used MCP but used default Read
+        incorrect_reads = []
+        for file_path, reads in default_reads.items():
+            for tc in reads:
+                incorrect_reads.append(
+                    {
+                        "file": file_path,
+                        "timestamp": tc.timestamp.isoformat(),
+                        "tool_used": tc.tool_name,
+                        "expected_tool": mcp_read_tool,
+                    }
+                )
+
+        return {
+            "file_extensions_analyzed": file_extensions,
+            "total_target_file_reads": total_reads,
+            "mcp_tool_reads": mcp_read_count,
+            "default_read_tool_reads": default_read_count,
+            "unique_files_read": len(all_target_files),
+            "files_using_mcp_only": len(set(mcp_reads.keys()) - set(default_reads.keys())),
+            "files_using_default_only": len(set(default_reads.keys()) - set(mcp_reads.keys())),
+            "files_using_both": len(set(default_reads.keys()) & set(mcp_reads.keys())),
+            "compliance_rate": compliance_rate,
+            "all_compliant": default_read_count == 0,
+            "incorrect_reads": sorted(incorrect_reads, key=lambda x: x["timestamp"]),
+        }
+
+    def generate_report(self, include_mcp_analysis: bool = False) -> str:
+        """Generate a comprehensive analysis report.
+
+        Args:
+            include_mcp_analysis: If True, include MCP tool usage analysis for Python files.
+        """
         self.parse()
 
         search_analysis = self.analyze_search_efficiency()
         file_analysis = self.analyze_file_access_sequence()
         tool_dist = self.analyze_tool_distribution()
         discovery_metrics = self.calculate_discovery_metrics()
+        mcp_analysis = self.analyze_mcp_tool_usage() if include_mcp_analysis else None
 
         report = []
         report.append("# Information Retrieval Pattern Analysis")
@@ -274,28 +360,62 @@ class SessionAnalyzer:
             delay_ms = discovery_metrics["search_to_read_delay_ms"]
             report.append(f"- Time from first search to first read: {delay_ms:.0f}ms")
 
+        # Add MCP tool usage analysis if requested
+        if mcp_analysis:
+            report.append("\n## MCP Tool Usage Analysis (Python Files)")
+            exts = ", ".join(mcp_analysis["file_extensions_analyzed"])
+            report.append(f"- File extensions analyzed: {exts}")
+            report.append(f"- Total Python file reads: {mcp_analysis['total_target_file_reads']}")
+            report.append(f"- Reads via MCP tool (xfile_context): {mcp_analysis['mcp_tool_reads']}")
+            report.append(
+                f"- Reads via default Read tool: {mcp_analysis['default_read_tool_reads']}"
+            )
+            report.append(f"- Unique Python files: {mcp_analysis['unique_files_read']}")
+            report.append(f"- **Compliance rate: {mcp_analysis['compliance_rate']:.1f}%**")
+
+            if mcp_analysis["all_compliant"]:
+                report.append("\n### Status: PASS")
+                report.append("All Python file reads used the xfile_context MCP tool.")
+            else:
+                report.append("\n### Status: FAIL")
+                report.append(
+                    f"Found {mcp_analysis['default_read_tool_reads']} Python file read(s) "
+                    "using the default Read tool instead of xfile_context MCP tool."
+                )
+
+                if mcp_analysis["incorrect_reads"]:
+                    report.append("\n### Incorrect Reads (Used Default Read Tool)")
+                    for read in mcp_analysis["incorrect_reads"]:
+                        report.append(f"- `{read['file']}` at {read['timestamp']}")
+                        report.append(f"  - Used: `{read['tool_used']}`")
+                        report.append(f"  - Expected: `{read['expected_tool']}`")
+
         return "\n".join(report)
 
 
 def main():
     """Main entry point."""
-    if len(sys.argv) < 2:
-        print("Usage: python session_analyzer.py <session.jsonl>")
-        print("\nExample:")
-        example_path = (
-            "~/.claude/projects/-Users-henruwang-Code-reaction-requests/"
-            "1ea0f7d8-716c-4383-8ecd-4b4cbb0b72a5.jsonl"
-        )
-        print(f"  python session_analyzer.py {example_path}")
-        sys.exit(1)
+    import argparse
 
-    session_file = Path(sys.argv[1])
+    parser = argparse.ArgumentParser(
+        description="Analyze Claude Code session logs for information retrieval patterns."
+    )
+    parser.add_argument("session_file", help="Path to the session .jsonl file")
+    parser.add_argument(
+        "--mcp-analysis",
+        action="store_true",
+        help="Include MCP tool usage analysis for Python files",
+    )
+
+    args = parser.parse_args()
+
+    session_file = Path(args.session_file)
     if not session_file.exists():
         print(f"Error: Session file not found: {session_file}")
         sys.exit(1)
 
     analyzer = SessionAnalyzer(session_file)
-    report = analyzer.generate_report()
+    report = analyzer.generate_report(include_mcp_analysis=args.mcp_analysis)
     print(report)
 
 
