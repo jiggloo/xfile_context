@@ -836,3 +836,166 @@ class TestMetricsCollectorContextManager:
 
         # File should not exist (no auto-write)
         assert not log_path.exists()
+
+
+class TestMetricsCollectorShutdown:
+    """Tests for MetricsCollector shutdown and flush functionality (Issue #155)."""
+
+    @pytest.fixture
+    def temp_dir(self) -> Generator[Path, None, None]:
+        """Create a temporary directory for log files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield Path(tmpdir)
+
+    def test_finalize_and_write_is_idempotent(self, temp_dir: Path) -> None:
+        """finalize_and_write should only write final metrics once (Issue #155)."""
+        collector = MetricsCollector(log_dir=temp_dir, session_id="idempotent-test")
+        collector.set_configuration({"test": True})
+
+        # Create mock components
+        mock_cache = MagicMock()
+        mock_stats = MagicMock()
+        mock_stats.hits = 10
+        mock_stats.misses = 5
+        mock_stats.staleness_refreshes = 2
+        mock_stats.peak_size_bytes = 1024
+        mock_stats.evictions_lru = 0
+        mock_cache.get_statistics.return_value = mock_stats
+
+        mock_injection_logger = MagicMock()
+        mock_inj_stats = MagicMock()
+        mock_inj_stats.total_injections = 5
+        mock_injection_logger.get_statistics.return_value = mock_inj_stats
+
+        mock_warning_logger = MagicMock()
+        mock_warn_stats = MagicMock()
+        mock_warn_stats.total_warnings = 2
+        mock_warn_stats.by_type = {}
+        mock_warn_stats.files_with_most_warnings = []
+        mock_warning_logger.get_statistics.return_value = mock_warn_stats
+
+        mock_graph = MagicMock()
+        mock_graph.get_all_relationships.return_value = []
+
+        # First call should write metrics
+        result1 = collector.finalize_and_write(
+            cache=mock_cache,
+            injection_logger=mock_injection_logger,
+            warning_logger=mock_warning_logger,
+            graph=mock_graph,
+        )
+        assert result1 is not None
+        assert collector.is_metrics_written()
+
+        # Second call should return None (idempotent)
+        result2 = collector.finalize_and_write(
+            cache=mock_cache,
+            injection_logger=mock_injection_logger,
+            warning_logger=mock_warning_logger,
+            graph=mock_graph,
+        )
+        assert result2 is None
+
+        # Verify only one entry was written to file
+        log_path = collector.get_log_path()
+        with open(log_path) as f:
+            lines = f.readlines()
+        assert len(lines) == 1
+
+    def test_flush_intermediate_writes_metrics(self, temp_dir: Path) -> None:
+        """flush_intermediate should write intermediate metrics (Issue #155)."""
+        collector = MetricsCollector(log_dir=temp_dir, session_id="intermediate-test")
+        collector.record_injection_token_count(100)
+
+        # Flush intermediate metrics
+        metrics = collector.flush_intermediate()
+
+        assert metrics is not None
+        assert collector.get_intermediate_flush_count() == 1
+
+        # Verify file was written
+        log_path = collector.get_log_path()
+        assert log_path.exists()
+
+        # Verify flush_type is "intermediate"
+        with open(log_path) as f:
+            data = json.loads(f.readline())
+            assert data["flush_type"] == "intermediate"
+
+    def test_flush_intermediate_can_be_called_multiple_times(self, temp_dir: Path) -> None:
+        """flush_intermediate should allow multiple calls (Issue #155)."""
+        collector = MetricsCollector(log_dir=temp_dir, session_id="multi-flush-test")
+
+        # Flush multiple times
+        collector.record_injection_token_count(100)
+        collector.flush_intermediate()
+
+        collector.record_injection_token_count(200)
+        collector.flush_intermediate()
+
+        collector.record_injection_token_count(300)
+        collector.flush_intermediate()
+
+        assert collector.get_intermediate_flush_count() == 3
+
+        # Verify all entries were written
+        log_path = collector.get_log_path()
+        with open(log_path) as f:
+            lines = f.readlines()
+        assert len(lines) == 3
+
+        # Verify all have flush_type "intermediate"
+        for line in lines:
+            data = json.loads(line)
+            assert data["flush_type"] == "intermediate"
+
+    def test_flush_intermediate_does_not_prevent_final_write(self, temp_dir: Path) -> None:
+        """flush_intermediate should not prevent finalize_and_write (Issue #155)."""
+        collector = MetricsCollector(log_dir=temp_dir, session_id="flush-then-final-test")
+
+        # Flush intermediate
+        collector.record_injection_token_count(100)
+        collector.flush_intermediate()
+        assert not collector.is_metrics_written()
+
+        # Final write should still work
+        collector.record_injection_token_count(200)
+        result = collector.finalize_and_write()
+
+        assert result is not None
+        assert collector.is_metrics_written()
+
+        # Verify both entries were written
+        log_path = collector.get_log_path()
+        with open(log_path) as f:
+            lines = f.readlines()
+        assert len(lines) == 2
+
+        # First entry should be intermediate, second should be final
+        data1 = json.loads(lines[0])
+        data2 = json.loads(lines[1])
+        assert data1["flush_type"] == "intermediate"
+        assert data2["flush_type"] == "final"
+
+    def test_write_metrics_includes_flush_type(self, temp_dir: Path) -> None:
+        """write_metrics should include flush_type in output (Issue #155)."""
+        collector = MetricsCollector(log_dir=temp_dir, session_id="flush-type-test")
+        metrics = collector.build_session_metrics()
+
+        # Write with default flush_type
+        collector.write_metrics(metrics)
+
+        log_path = collector.get_log_path()
+        with open(log_path) as f:
+            data = json.loads(f.readline())
+            assert data["flush_type"] == "final"
+
+    def test_is_metrics_written_initially_false(self, temp_dir: Path) -> None:
+        """is_metrics_written should be False initially (Issue #155)."""
+        collector = MetricsCollector(log_dir=temp_dir)
+        assert not collector.is_metrics_written()
+
+    def test_get_intermediate_flush_count_initially_zero(self, temp_dir: Path) -> None:
+        """get_intermediate_flush_count should be 0 initially (Issue #155)."""
+        collector = MetricsCollector(log_dir=temp_dir)
+        assert collector.get_intermediate_flush_count() == 0

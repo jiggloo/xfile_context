@@ -436,6 +436,11 @@ class MetricsCollector:
         # File handle (lazy initialization)
         self._file_handle: Optional[TextIO] = None
 
+        # Track whether metrics have been written (Issue #155)
+        # Prevents duplicate final writes during shutdown
+        self._metrics_written = False
+        self._intermediate_flush_count = 0
+
         logger.debug(
             f"MetricsCollector initialized with session_id={self._session_id}, "
             f"anonymize_paths={anonymize_paths}"
@@ -777,11 +782,12 @@ class MetricsCollector:
 
         return metrics
 
-    def write_metrics(self, metrics: SessionMetrics) -> None:
+    def write_metrics(self, metrics: SessionMetrics, flush_type: str = "final") -> None:
         """Write session metrics to JSONL file.
 
         Args:
             metrics: SessionMetrics to write.
+            flush_type: Type of write - "final" for session end, "intermediate" for periodic flush.
         """
         # Check for date rotation before writing
         self._check_date_rotation()
@@ -789,12 +795,16 @@ class MetricsCollector:
         self._ensure_log_dir()
         log_path = self._get_log_path()
 
+        # Add flush_type to metrics dict for distinguishing intermediate vs final
+        metrics_dict = metrics.to_dict()
+        metrics_dict["flush_type"] = flush_type
+
         # Open file for appending
         with open(log_path, "a", encoding="utf-8") as f:
-            json_line = json.dumps(metrics.to_dict(), separators=(",", ":"))
+            json_line = json.dumps(metrics_dict, separators=(",", ":"))
             f.write(json_line + "\n")
 
-        logger.info(f"Session metrics written to {log_path}")
+        logger.info(f"Session metrics ({flush_type}) written to {log_path}")
 
     def finalize_and_write(
         self,
@@ -802,10 +812,49 @@ class MetricsCollector:
         injection_logger: Optional[Any] = None,
         warning_logger: Optional[Any] = None,
         graph: Optional[Any] = None,
-    ) -> SessionMetrics:
+    ) -> Optional[SessionMetrics]:
         """Finalize session and write metrics to file.
 
         Convenience method that builds and writes metrics in one call.
+        Idempotent: safe to call multiple times, but only writes final metrics once.
+        Per Issue #155: Prevents duplicate final writes during shutdown.
+
+        Args:
+            cache: WorkingMemoryCache instance.
+            injection_logger: InjectionLogger instance.
+            warning_logger: WarningLogger instance.
+            graph: RelationshipGraph instance.
+
+        Returns:
+            The SessionMetrics that were written, or None if already written.
+        """
+        # Idempotent: skip if final metrics already written (Issue #155)
+        if self._metrics_written:
+            logger.debug("Final session metrics already written, skipping duplicate write")
+            return None
+
+        metrics = self.build_session_metrics(
+            cache=cache,
+            injection_logger=injection_logger,
+            warning_logger=warning_logger,
+            graph=graph,
+        )
+        self.write_metrics(metrics, flush_type="final")
+        self._metrics_written = True
+        return metrics
+
+    def flush_intermediate(
+        self,
+        cache: Optional[Any] = None,
+        injection_logger: Optional[Any] = None,
+        warning_logger: Optional[Any] = None,
+        graph: Optional[Any] = None,
+    ) -> SessionMetrics:
+        """Write intermediate metrics during session without finalizing.
+
+        Per Issue #155: Periodic flush ensures metrics are captured even if the
+        process terminates unexpectedly. Unlike finalize_and_write(), this can
+        be called multiple times and doesn't prevent final metrics from being written.
 
         Args:
             cache: WorkingMemoryCache instance.
@@ -816,14 +865,34 @@ class MetricsCollector:
         Returns:
             The SessionMetrics that were written.
         """
+        self._intermediate_flush_count += 1
+
         metrics = self.build_session_metrics(
             cache=cache,
             injection_logger=injection_logger,
             warning_logger=warning_logger,
             graph=graph,
         )
-        self.write_metrics(metrics)
+        self.write_metrics(metrics, flush_type="intermediate")
+
+        logger.info(f"Intermediate metrics flush #{self._intermediate_flush_count} completed")
         return metrics
+
+    def is_metrics_written(self) -> bool:
+        """Check if final metrics have been written.
+
+        Returns:
+            True if finalize_and_write() has been called successfully.
+        """
+        return self._metrics_written
+
+    def get_intermediate_flush_count(self) -> int:
+        """Get the number of intermediate flushes performed.
+
+        Returns:
+            Number of times flush_intermediate() has been called.
+        """
+        return self._intermediate_flush_count
 
     def get_log_path(self) -> Path:
         """Get the path to the log file.
